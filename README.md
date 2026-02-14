@@ -17,8 +17,8 @@ This repository is the base scaffold for a local, private, plan-and-execute codi
 
 ## Build Progress
 
-- Current step: `Step 6` - Add terminal/browser tools and richer execution traces.
-- Next step: Improve reliability for follow-up tasks and add persistent run history.
+- Current step: `Step 7` - Improve reliability for follow-up tasks and add persistent run history.
+- Next step: Add interactive approval UI for `ask` mode.
 
 ## Quick start
 

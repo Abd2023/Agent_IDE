@@ -147,6 +147,22 @@ function getChatHtml(): string {
         border-radius: 6px;
         background: rgba(127, 127, 127, 0.08);
       }
+      .trace {
+        border: 1px solid #555;
+        border-radius: 8px;
+        padding: 10px;
+        overflow-y: auto;
+      }
+      .trace h3 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+      }
+      .trace pre {
+        white-space: pre-wrap;
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.35;
+      }
       .msg {
         margin-bottom: 8px;
         padding: 8px;
@@ -185,6 +201,10 @@ function getChatHtml(): string {
         <h3>Plan Checklist</h3>
         <div class="meta">No plan yet. Send a task to generate one.</div>
       </div>
+      <div id="trace" class="trace">
+        <h3>Execution Trace</h3>
+        <div class="meta">No traces yet.</div>
+      </div>
       <div class="composer">
         <textarea id="input" placeholder="Describe the coding task..."></textarea>
         <button id="send">Send</button>
@@ -194,6 +214,7 @@ function getChatHtml(): string {
       const vscode = acquireVsCodeApi();
       const messagesEl = document.getElementById("messages");
       const planEl = document.getElementById("plan");
+      const traceEl = document.getElementById("trace");
       const progressMetaEl = document.getElementById("progressMeta");
       const inputEl = document.getElementById("input");
       const sendEl = document.getElementById("send");
@@ -225,11 +246,32 @@ function getChatHtml(): string {
         for (const step of payload.plan.steps) {
           const item = document.createElement("div");
           item.className = "item";
-          item.textContent = statusIcon(step.status) + " " + step.title + " [" + step.status + "]";
+          const suffix = step.notes ? " - " + step.notes : "";
+          item.textContent = statusIcon(step.status) + " " + step.title + " [" + step.status + "]" + suffix;
           planEl.appendChild(item);
         }
 
         progressMetaEl.textContent = "Current: " + payload.currentStep + " | Next: " + payload.nextStep;
+        renderTrace(payload.logs || []);
+      }
+
+      function renderTrace(logs) {
+        traceEl.innerHTML = "";
+        const heading = document.createElement("h3");
+        heading.textContent = "Execution Trace";
+        traceEl.appendChild(heading);
+
+        if (!logs.length) {
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = "No traces yet.";
+          traceEl.appendChild(meta);
+          return;
+        }
+
+        const block = document.createElement("pre");
+        block.textContent = logs.join("\\n");
+        traceEl.appendChild(block);
       }
 
       function statusIcon(status) {

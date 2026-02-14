@@ -58,4 +58,5 @@ export interface RunStatusResponse {
   currentStep: string;
   nextStep: string;
   timestamp: string;
+  logs: string[];
 }

@@ -74,7 +74,8 @@ const server = createServer((req, res) => {
           approvalMode: normalizeApprovalMode(body.approvalMode),
           plan,
           isFinished: false,
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          logs: []
         };
         runs.set(runId, run);
         void executeRun(run);
