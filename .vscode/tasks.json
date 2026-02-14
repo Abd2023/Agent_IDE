@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build:vscode-extension",
+      "type": "shell",
+      "command": "npm --workspace @local-agent-ide/vscode-extension run build",
+      "problemMatcher": "$tsc"
+    }
+  ]
+}
+

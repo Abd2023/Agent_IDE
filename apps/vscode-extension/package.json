@@ -1,0 +1,60 @@
+{
+  "name": "@local-agent-ide/vscode-extension",
+  "displayName": "Local Agent IDE",
+  "description": "VS Code extension shell for local plan-and-execute agent workflows",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "local-agent-ide",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:localAgentIDE.openChatPanel"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "localAgentIDE.openChatPanel",
+        "title": "Local Agent IDE: Open Chat Panel"
+      }
+    ],
+    "configuration": {
+      "title": "Local Agent IDE",
+      "properties": {
+        "localAgentIDE.agentServiceUrl": {
+          "type": "string",
+          "default": "http://localhost:4000",
+          "description": "Base URL for the local agent-service API."
+        },
+        "localAgentIDE.approvalMode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "auto",
+            "unrestricted"
+          ],
+          "default": "auto",
+          "description": "Safety mode for agent file actions."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "clean": "if exist dist rmdir /s /q dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@local-agent-ide/core": "0.1.0"
+  }
+}

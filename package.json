@@ -1,0 +1,21 @@
+{
+  "name": "local-agent-ide",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local, private plan-and-execute coding agent IDE",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run -ws build",
+    "clean": "npm run -ws clean",
+    "dev:agent": "npm --workspace @local-agent-ide/agent-service run dev",
+    "dev:ext": "npm --workspace @local-agent-ide/vscode-extension run watch",
+    "typecheck": "npm run -ws typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
