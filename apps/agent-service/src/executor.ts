@@ -1,6 +1,7 @@
-import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type {
   AgentPlan,
   AgentStep,
@@ -16,6 +17,7 @@ export interface ExecutionRun {
   runId: string;
   task: string;
   workspaceRoot?: string;
+  sessionId?: string;
   approvalMode: ApprovalMode;
   plan: AgentPlan;
   isFinished: boolean;
@@ -60,6 +62,11 @@ type RenameAction = {
   to: string;
 };
 
+type ReadFileAction = {
+  tool: "read_file";
+  path: string;
+};
+
 type BrowserOpenAction = {
   tool: "browser_open";
   url: string;
@@ -98,6 +105,7 @@ type ModelAction =
   | BrowseAction
   | MkdirAction
   | RenameAction
+  | ReadFileAction
   | BrowserOpenAction
   | BrowserClickAction
   | BrowserTypeAction
@@ -136,8 +144,21 @@ export async function executeRun(run: ExecutionRun): Promise<void> {
         throw new Error("No workspace root provided by extension.");
       }
 
+      const deterministicSummary = await tryHandleSummarizeUrlToFileTask(run);
+      if (deterministicSummary) {
+        const step = getStep(run.plan.steps, "implement");
+        step.notes = deterministicSummary;
+        return;
+      }
+      const fileAnswer = await tryHandleFileQuestionTask(run);
+      if (fileAnswer) {
+        const step = getStep(run.plan.steps, "implement");
+        step.notes = fileAnswer;
+        return;
+      }
+
       const files = await scanWorkspaceFiles(run.workspaceRoot, 200);
-      const actionPlan = await proposeImplementationActions(run.task, files);
+      const actionPlan = await proposeImplementationActions(run.task, files, run.workspaceRoot);
       log(run, `Action plan generated: ${actionPlan.actions.length} action(s).`);
       await executeActionsWithRetry(run, actionPlan.actions, files);
 
@@ -264,8 +285,8 @@ async function scanWorkspaceFiles(workspaceRoot: string, limit: number): Promise
   return results.map((absolute) => path.relative(workspaceRoot, absolute).replace(/\\/g, "/"));
 }
 
-async function proposeImplementationActions(task: string, files: string[]): Promise<ModelActionPlan> {
-  const deterministic = deriveDeterministicBrowserPlan(task);
+async function proposeImplementationActions(task: string, files: string[], workspaceRoot: string): Promise<ModelActionPlan> {
+  const deterministic = deriveDeterministicBrowserPlan(task, files, workspaceRoot);
   if (deterministic) {
     return deterministic;
   }
@@ -278,7 +299,7 @@ async function proposeImplementationActions(task: string, files: string[]): Prom
       content: [
         "You are a coding agent that proposes tool actions.",
         "Return strict JSON only and no markdown.",
-        'Schema: {"actions":[{"tool":"write_file","path":"relative/path","content":"full file content"}|{"tool":"make_dir","path":"relative/path"}|{"tool":"rename_path","from":"old/rel/path","to":"new/rel/path"}|{"tool":"run_command","command":"npm run build"}|{"tool":"browse_url","url":"https://example.com"}|{"tool":"browser_open","url":"https://example.com"}|{"tool":"browser_click","selector":"button[type=submit]"}|{"tool":"browser_type","selector":"input[name=q]","text":"hello"}|{"tool":"browser_wait_for","selector":"#app","timeoutMs":10000}|{"tool":"browser_screenshot","path":"artifacts/screen.png"}|{"tool":"browser_eval","script":"document.title"}],"summary":"short text"}',
+        'Schema: {"actions":[{"tool":"write_file","path":"relative/path","content":"full file content"}|{"tool":"read_file","path":"relative/path"}|{"tool":"make_dir","path":"relative/path"}|{"tool":"rename_path","from":"old/rel/path","to":"new/rel/path"}|{"tool":"run_command","command":"npm run build"}|{"tool":"browse_url","url":"https://example.com"}|{"tool":"browser_open","url":"https://example.com or file:///C:/path/file.html"}|{"tool":"browser_click","selector":"button[type=submit]"}|{"tool":"browser_type","selector":"input[name=q]","text":"hello"}|{"tool":"browser_wait_for","selector":"#app","timeoutMs":10000}|{"tool":"browser_screenshot","path":"artifacts/screen.png"}|{"tool":"browser_eval","script":"document.title"}],"summary":"short text"}',
         "Rules: max 6 actions. Keep actions safe and workspace-relevant."
       ].join(" ")
     },
@@ -328,12 +349,16 @@ function isValidAction(action: unknown): action is ModelAction {
     );
   }
 
+  if (candidate.tool === "read_file") {
+    return typeof candidate.path === "string" && candidate.path.trim().length > 0;
+  }
+
   if (candidate.tool === "browse_url") {
     return typeof candidate.url === "string" && /^https?:\/\//i.test(candidate.url);
   }
 
   if (candidate.tool === "browser_open") {
-    return typeof candidate.url === "string" && /^https?:\/\//i.test(candidate.url);
+    return typeof candidate.url === "string" && /^(https?:\/\/|file:\/\/)/i.test(candidate.url);
   }
 
   if (candidate.tool === "browser_click") {
@@ -403,6 +428,16 @@ async function executeActions(run: ExecutionRun, actions: ModelAction[]): Promis
       continue;
     }
 
+    if (action.tool === "read_file") {
+      await requireApproval(run, "read_file", `Read file ${action.path}`);
+      enforcePathPolicy(action.path, run.workspaceRoot, run.approvalMode, "write_file");
+      const inputPath = toSafeWorkspacePath(run.workspaceRoot, action.path);
+      const content = await readFile(inputPath, "utf8");
+      log(run, `read_file: ${action.path}`);
+      log(run, `file_preview: ${truncate(content.replace(/\s+/g, " "), 300)}`);
+      continue;
+    }
+
     if (action.tool === "run_command") {
       await requireApproval(run, "run_command", `Run command: ${action.command}`);
       enforceCommandPolicy(action.command, run.approvalMode);
@@ -427,7 +462,7 @@ async function executeActions(run: ExecutionRun, actions: ModelAction[]): Promis
 
     if (action.tool === "browser_open") {
       await requireApproval(run, "browser_open", `Open browser URL: ${action.url}`);
-      enforceBrowsePolicy(action.url, run.approvalMode);
+      enforceBrowserOpenPolicy(action.url, run.workspaceRoot, run.approvalMode);
       const session = await getBrowserSession(run);
       await session.page.goto(action.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
       log(run, `browser_open: ${action.url}`);
@@ -534,7 +569,8 @@ async function proposeRepairActions(
       content: [
         "You repair failed coding agent actions.",
         "Return strict JSON only with schema:",
-        '{"actions":[{"tool":"write_file","path":"relative/path","content":"..."}|{"tool":"make_dir","path":"relative/path"}|{"tool":"rename_path","from":"a","to":"b"}|{"tool":"run_command","command":"..."}|{"tool":"browse_url","url":"https://..."}|{"tool":"browser_open","url":"https://..."}|{"tool":"browser_click","selector":"..."}|{"tool":"browser_type","selector":"...","text":"..."}|{"tool":"browser_wait_for","selector":"...","timeoutMs":10000}|{"tool":"browser_screenshot","path":"..."}|{"tool":"browser_eval","script":"document.title"}]}',
+        '{"actions":[{"tool":"write_file","path":"relative/path","content":"..."}|{"tool":"read_file","path":"relative/path"}|{"tool":"make_dir","path":"relative/path"}|{"tool":"rename_path","from":"a","to":"b"}|{"tool":"run_command","command":"..."}|{"tool":"browse_url","url":"https://..."}|{"tool":"browser_open","url":"https://..."}|{"tool":"browser_click","selector":"..."}|{"tool":"browser_type","selector":"...","text":"..."}|{"tool":"browser_wait_for","selector":"...","timeoutMs":10000}|{"tool":"browser_screenshot","path":"..."}|{"tool":"browser_eval","script":"document.title"}]}',
+        '{"actions":[{"tool":"write_file","path":"relative/path","content":"..."}|{"tool":"read_file","path":"relative/path"}|{"tool":"make_dir","path":"relative/path"}|{"tool":"rename_path","from":"a","to":"b"}|{"tool":"run_command","command":"..."}|{"tool":"browse_url","url":"https://..."}|{"tool":"browser_open","url":"https://... or file:///..."}|{"tool":"browser_click","selector":"..."}|{"tool":"browser_type","selector":"...","text":"..."}|{"tool":"browser_wait_for","selector":"...","timeoutMs":10000}|{"tool":"browser_screenshot","path":"..."}|{"tool":"browser_eval","script":"document.title"}]}',
         "Prefer minimal fix actions and avoid repeating failing paths."
       ].join(" ")
     },
@@ -554,6 +590,54 @@ async function proposeRepairActions(
     return null;
   }
   return parsed.actions.filter(isValidAction).slice(0, 6);
+}
+
+async function tryHandleSummarizeUrlToFileTask(run: ExecutionRun): Promise<string | null> {
+  if (!run.workspaceRoot) {
+    return null;
+  }
+
+  const parsed = parseSummarizeToFileTask(run.task);
+  if (!parsed) {
+    return null;
+  }
+
+  await requireApproval(run, "browse_url", `Browse URL: ${parsed.url}`);
+  enforceBrowsePolicy(parsed.url, run.approvalMode);
+  const snapshot = await browseUrl(parsed.url);
+  log(run, `browse_url: ${parsed.url}`);
+
+  const summary = await summarizePageContent(parsed.url, snapshot, parsed.maxSentences);
+  const fileAction: FileAction = { tool: "write_file", path: parsed.outputPath, content: `${summary}\n` };
+  await requireApproval(run, "write_file", `Write file ${parsed.outputPath}`);
+  enforceWritePolicy(fileAction, run.workspaceRoot, run.approvalMode);
+  const outputPath = toSafeWorkspacePath(run.workspaceRoot, parsed.outputPath);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, fileAction.content, "utf8");
+  log(run, `write_file: ${parsed.outputPath}`);
+
+  return `Summarized ${parsed.url} into ${parsed.outputPath}`;
+}
+
+async function tryHandleFileQuestionTask(run: ExecutionRun): Promise<string | null> {
+  if (!run.workspaceRoot) {
+    return null;
+  }
+
+  const targetPath = parseFileQuestionPath(run.task);
+  if (!targetPath) {
+    return null;
+  }
+
+  await requireApproval(run, "read_file", `Read file ${targetPath}`);
+  enforcePathPolicy(targetPath, run.workspaceRoot, run.approvalMode, "write_file");
+  const inputPath = toSafeWorkspacePath(run.workspaceRoot, targetPath);
+  const content = await readFile(inputPath, "utf8");
+  log(run, `read_file: ${targetPath}`);
+
+  const oneSentence = await summarizeFileInOneSentence(targetPath, content);
+  log(run, `file_answer: ${oneSentence}`);
+  return oneSentence;
 }
 
 function enforceWritePolicy(action: FileAction, workspaceRoot: string, approvalMode: ApprovalMode): void {
@@ -592,6 +676,28 @@ function enforceBrowsePolicy(url: string, approvalMode: ApprovalMode): void {
   if (!/^https?:\/\//i.test(url)) {
     throw new Error(`Blocked URL: ${url}`);
   }
+}
+
+function enforceBrowserOpenPolicy(url: string, workspaceRoot: string, approvalMode: ApprovalMode): void {
+  if (/^https?:\/\//i.test(url)) {
+    enforceBrowsePolicy(url, approvalMode);
+    return;
+  }
+
+  if (/^file:\/\//i.test(url)) {
+    if (approvalMode === "unrestricted") {
+      return;
+    }
+
+    const safeRoot = path.resolve(workspaceRoot).replace(/\\/g, "/").toLowerCase();
+    const decodedPath = decodeURIComponent(url.replace(/^file:\/\//i, "")).replace(/\\/g, "/").toLowerCase();
+    if (!decodedPath.includes(safeRoot)) {
+      throw new Error(`Blocked local file URL outside workspace: ${url}`);
+    }
+    return;
+  }
+
+  throw new Error(`Blocked browser target: ${url}`);
 }
 
 function enforcePathPolicy(
@@ -686,6 +792,116 @@ async function browseUrl(url: string): Promise<string> {
     return body.replace(/\s+/g, " ").trim();
   }
   return `[${contentType}] ${body.slice(0, 200)}`;
+}
+
+interface SummarizeToFileTask {
+  url: string;
+  outputPath: string;
+  maxSentences: number;
+}
+
+function parseSummarizeToFileTask(task: string): SummarizeToFileTask | null {
+  const normalizedTask = task.trim();
+  const urlMatch = normalizedTask.match(/\bhttps?:\/\/[^\s)]+/i);
+  if (!urlMatch) {
+    return null;
+  }
+  if (!/\bsummary\b|\bsummarize\b/i.test(normalizedTask)) {
+    return null;
+  }
+
+  const quotedPathMatch = normalizedTask.match(/["']([^"']+\.txt)["']/i);
+  const inlinePathMatch = normalizedTask.match(/\b(?:in|into|to)\s+([a-z0-9_./\\-]+\.txt)\b/i);
+  const outputPath = (quotedPathMatch?.[1] ?? inlinePathMatch?.[1] ?? "output.txt").replace(/\\/g, "/");
+  const maxSentences = /\bquick\b/i.test(normalizedTask) ? 4 : 6;
+
+  return {
+    url: stripTrailingPunctuation(urlMatch[0]),
+    outputPath,
+    maxSentences
+  };
+}
+
+function parseFileQuestionPath(task: string): string | null {
+  const normalizedTask = task.trim();
+  if (!/\bwhat\b|\binside\b|\bcontent\b|\bwritten\b/i.test(normalizedTask)) {
+    return null;
+  }
+
+  const quotedMatch = normalizedTask.match(/["']([^"']+\.[a-z0-9]+)["']/i);
+  const txtMatch = normalizedTask.match(/\b([a-z0-9_./\\-]+\.(?:txt|md|json|csv|log))\b/i);
+  const filePath = quotedMatch?.[1] ?? txtMatch?.[1];
+  if (!filePath) {
+    return null;
+  }
+  return filePath.replace(/\\/g, "/");
+}
+
+async function summarizePageContent(url: string, rawContent: string, maxSentences: number): Promise<string> {
+  const sourceText = extractReadableText(rawContent);
+  const excerpt = sourceText.slice(0, 14_000);
+
+  try {
+    const modelSummary = await callModel([
+      {
+        role: "system",
+        content: [
+          "You summarize webpage content.",
+          `Return plain text only in ${String(maxSentences)} short sentences max.`,
+          "Avoid markdown and avoid lists."
+        ].join(" ")
+      },
+      {
+        role: "user",
+        content: `URL: ${url}\nPage content excerpt:\n${excerpt}`
+      }
+    ]);
+
+    return modelSummary.trim();
+  } catch {
+    const fallback = summarizeTextHeuristically(sourceText, maxSentences);
+    return fallback || `Summary unavailable for ${url}.`;
+  }
+}
+
+async function summarizeFileInOneSentence(filePath: string, content: string): Promise<string> {
+  const excerpt = content.replace(/\s+/g, " ").trim().slice(0, 3000);
+  try {
+    const response = await callModel([
+      {
+        role: "system",
+        content:
+          "You summarize file content. Return exactly one short sentence in plain text with no markdown and no quotes."
+      },
+      {
+        role: "user",
+        content: `File: ${filePath}\nContent:\n${excerpt}`
+      }
+    ]);
+    return response.trim();
+  } catch {
+    const fallback = summarizeTextHeuristically(excerpt, 1);
+    if (fallback) {
+      return fallback;
+    }
+    return `${filePath} is currently empty or unreadable.`;
+  }
+}
+
+function extractReadableText(input: string): string {
+  const withoutScripts = input
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ");
+  const textOnly = withoutScripts.replace(/<[^>]+>/g, " ");
+  return textOnly.replace(/\s+/g, " ").trim();
+}
+
+function summarizeTextHeuristically(text: string, maxSentences: number): string {
+  const sentenceMatches = text.match(/[^.!?]+[.!?]/g) ?? [];
+  if (sentenceMatches.length > 0) {
+    return sentenceMatches.slice(0, maxSentences).join(" ").trim();
+  }
+  return text.slice(0, 900).trim();
 }
 
 async function getBrowserSession(run: ExecutionRun): Promise<BrowserSession> {
@@ -870,17 +1086,19 @@ async function fillWithFallback(page: Page, selector: string, text: string): Pro
   throw new Error(`Unable to fill selector: ${selector}`);
 }
 
-function deriveDeterministicBrowserPlan(task: string): ModelActionPlan | null {
+function deriveDeterministicBrowserPlan(task: string, files: string[], workspaceRoot: string): ModelActionPlan | null {
   const normalizedTask = task.trim();
   const urlMatch = normalizedTask.match(/\bhttps?:\/\/[^\s)]+/i);
-  if (!urlMatch) {
-    return null;
+  const url = urlMatch ? stripTrailingPunctuation(urlMatch[0]) : null;
+
+  const localOpenPlan = deriveLocalHtmlOpenPlan(normalizedTask, files, workspaceRoot);
+  if (localOpenPlan) {
+    return localOpenPlan;
   }
-  const url = stripTrailingPunctuation(urlMatch[0]);
 
   const wantsTitle =
     /\bdocument\.title\b/i.test(normalizedTask) || /\breturn\b[\s\S]*\btitle\b/i.test(normalizedTask);
-  if (wantsTitle) {
+  if (wantsTitle && url) {
     return {
       actions: [
         { tool: "browser_open", url },
@@ -892,7 +1110,7 @@ function deriveDeterministicBrowserPlan(task: string): ModelActionPlan | null {
 
   const typeMatch = normalizedTask.match(/\btype\s+["']([^"']+)["']/i);
   const wantsSearchFlow = /\bsearch\b/i.test(normalizedTask) && /\bscreenshot\b/i.test(normalizedTask);
-  if (wantsSearchFlow && typeMatch?.[1]) {
+  if (wantsSearchFlow && typeMatch?.[1] && url) {
     return {
       actions: [
         { tool: "browser_open", url },
@@ -906,6 +1124,35 @@ function deriveDeterministicBrowserPlan(task: string): ModelActionPlan | null {
   }
 
   return null;
+}
+
+function deriveLocalHtmlOpenPlan(task: string, files: string[], workspaceRoot: string): ModelActionPlan | null {
+  const wantsOpen = /\b(open|play|run|launch)\b/i.test(task);
+  if (!wantsOpen) {
+    return null;
+  }
+
+  const namedHtml = task.match(/\b([a-z0-9_.-]+\.html?)\b/i)?.[1];
+  const htmlFiles = files.filter((file) => /\.html?$/i.test(file));
+  if (htmlFiles.length === 0) {
+    return null;
+  }
+
+  let selected = "";
+  if (namedHtml) {
+    selected = htmlFiles.find((file) => file.toLowerCase().endsWith(namedHtml.toLowerCase())) ?? "";
+  }
+  if (!selected) {
+    selected = htmlFiles[0];
+  }
+
+  const absolute = toSafeWorkspacePath(workspaceRoot, selected);
+  const localUrl = pathToFileURL(absolute).href;
+
+  return {
+    actions: [{ tool: "browser_open", url: localUrl }],
+    summary: `Deterministic browser plan: open local file ${selected}`
+  };
 }
 
 function stripTrailingPunctuation(value: string): string {

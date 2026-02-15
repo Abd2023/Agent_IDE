@@ -10,6 +10,7 @@ interface ChatHistoryItem {
   role: "user" | "agent";
   message: string;
   workspaceRoot?: string;
+  sessionId?: string;
   timestamp: string;
 }
 
@@ -17,6 +18,7 @@ interface RunHistoryItem {
   runId: string;
   task: string;
   workspaceRoot?: string;
+  sessionId?: string;
   approvalMode: ApprovalMode;
   plan: AgentPlan;
   isFinished: boolean;
@@ -35,6 +37,7 @@ export async function appendChatHistory(input: {
   role: "user" | "agent";
   message: string;
   workspaceRoot?: string;
+  sessionId?: string;
 }): Promise<void> {
   await enqueueWrite(async (history) => {
     history.chats.push({
@@ -42,6 +45,7 @@ export async function appendChatHistory(input: {
       role: input.role,
       message: input.message,
       workspaceRoot: input.workspaceRoot,
+      sessionId: input.sessionId,
       timestamp: new Date().toISOString()
     });
 
@@ -55,6 +59,7 @@ export async function upsertRunHistory(input: {
   runId: string;
   task: string;
   workspaceRoot?: string;
+  sessionId?: string;
   approvalMode: ApprovalMode;
   plan: AgentPlan;
   isFinished: boolean;
@@ -66,6 +71,7 @@ export async function upsertRunHistory(input: {
       runId: input.runId,
       task: input.task,
       workspaceRoot: input.workspaceRoot,
+      sessionId: input.sessionId,
       approvalMode: input.approvalMode,
       plan: {
         task: input.plan.task,
@@ -89,22 +95,52 @@ export async function upsertRunHistory(input: {
   });
 }
 
-export async function getHistorySnapshot(workspaceRoot?: string): Promise<HistoryResponse> {
+export async function getHistorySnapshot(workspaceRoot?: string, sessionId?: string): Promise<HistoryResponse> {
   const history = await readHistory();
   const normalize = (value?: string) => value?.toLowerCase();
   const target = normalize(workspaceRoot);
+  const targetSession = normalize(sessionId);
+
+  const scopeByWorkspace = <T extends { workspaceRoot?: string }>(item: T): boolean =>
+    target ? normalize(item.workspaceRoot) === target : true;
+  const scopeBySession = <T extends { sessionId?: string }>(item: T): boolean =>
+    targetSession ? normalize(item.sessionId) === targetSession : true;
 
   const chats = history.chats
-    .filter((item) => (target ? normalize(item.workspaceRoot) === target : true))
+    .filter((item) => scopeByWorkspace(item) && scopeBySession(item))
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
     .slice(-200);
 
   const runs = history.runs
-    .filter((item) => (target ? normalize(item.workspaceRoot) === target : true))
+    .filter((item) => scopeByWorkspace(item) && scopeBySession(item))
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
     .slice(-50);
 
-  return { chats, runs };
+  const sessionsByUpdatedAt = new Map<string, string>();
+  for (const chat of history.chats) {
+    if (!scopeByWorkspace(chat) || !chat.sessionId) {
+      continue;
+    }
+    const current = sessionsByUpdatedAt.get(chat.sessionId);
+    if (!current || current < chat.timestamp) {
+      sessionsByUpdatedAt.set(chat.sessionId, chat.timestamp);
+    }
+  }
+  for (const run of history.runs) {
+    if (!scopeByWorkspace(run) || !run.sessionId) {
+      continue;
+    }
+    const current = sessionsByUpdatedAt.get(run.sessionId);
+    if (!current || current < run.updatedAt) {
+      sessionsByUpdatedAt.set(run.sessionId, run.updatedAt);
+    }
+  }
+
+  const sessions = Array.from(sessionsByUpdatedAt.entries())
+    .map(([id, updatedAt]) => ({ sessionId: id, updatedAt }))
+    .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+
+  return { chats, runs, sessions };
 }
 
 async function enqueueWrite(mutator: (history: HistoryFile) => void | Promise<void>): Promise<void> {

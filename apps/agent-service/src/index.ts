@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { agentConfig } from "./config.js";
 import type {
   ApprovalDecisionRequest,
@@ -35,7 +37,8 @@ const server = createServer((req, res) => {
 
   if (req.method === "GET" && pathname === "/history") {
     const workspaceRoot = requestUrl.searchParams.get("workspaceRoot") ?? undefined;
-    getHistorySnapshot(workspaceRoot)
+    const sessionId = requestUrl.searchParams.get("sessionId") ?? undefined;
+    getHistorySnapshot(workspaceRoot, sessionId)
       .then((history) => {
         const response: HistoryResponse = history;
         sendJson(res, 200, response);
@@ -58,15 +61,17 @@ const server = createServer((req, res) => {
         void appendChatHistory({
           role: "user",
           message: body.message.trim(),
-          workspaceRoot: body.workspaceRoot
+          workspaceRoot: body.workspaceRoot,
+          sessionId: body.sessionId
         });
 
-        generateChatReply(body.message, body.workspaceRoot)
+        resolveChatReply(body.message, body.workspaceRoot, body.sessionId)
           .then((reply) => {
             void appendChatHistory({
               role: "agent",
               message: reply,
-              workspaceRoot: body.workspaceRoot
+              workspaceRoot: body.workspaceRoot,
+              sessionId: body.sessionId
             });
 
             const response: ChatResponse = {
@@ -83,7 +88,8 @@ const server = createServer((req, res) => {
             void appendChatHistory({
               role: "agent",
               message: fallback,
-              workspaceRoot: body.workspaceRoot
+              workspaceRoot: body.workspaceRoot,
+              sessionId: body.sessionId
             });
             const response: ChatResponse = {
               reply: fallback,
@@ -114,6 +120,7 @@ const server = createServer((req, res) => {
           runId,
           task: body.task.trim(),
           workspaceRoot: body.workspaceRoot,
+          sessionId: body.sessionId,
           approvalMode: normalizeApprovalMode(body.approvalMode),
           plan,
           isFinished: false,
@@ -141,6 +148,7 @@ const server = createServer((req, res) => {
               runId: updatedRun.runId,
               task: updatedRun.task,
               workspaceRoot: updatedRun.workspaceRoot,
+              sessionId: updatedRun.sessionId,
               approvalMode: updatedRun.approvalMode,
               plan: updatedRun.plan,
               isFinished: updatedRun.isFinished,
@@ -154,6 +162,7 @@ const server = createServer((req, res) => {
           runId: run.runId,
           task: run.task,
           workspaceRoot: run.workspaceRoot,
+          sessionId: run.sessionId,
           approvalMode: run.approvalMode,
           plan: run.plan,
           isFinished: run.isFinished,
@@ -243,6 +252,71 @@ function sendJson(res: import("node:http").ServerResponse, statusCode: number, p
   res.end(JSON.stringify(payload));
 }
 
+async function resolveChatReply(message: string, workspaceRoot?: string, sessionId?: string): Promise<string> {
+  const nameReply = await tryAnswerFromRememberedName(message, workspaceRoot, sessionId);
+  if (nameReply) {
+    return nameReply;
+  }
+
+  const memoryReply = await tryAnswerFromWorkspaceFile(message, workspaceRoot);
+  if (memoryReply) {
+    return memoryReply;
+  }
+  return generateChatReply(message, workspaceRoot);
+}
+
+async function tryAnswerFromRememberedName(
+  message: string,
+  workspaceRoot?: string,
+  sessionId?: string
+): Promise<string | null> {
+  const statedName = parseNameStatement(message);
+  if (statedName) {
+    return `Understood. I will remember that your name is ${statedName}.`;
+  }
+
+  if (!isNameQuestion(message)) {
+    return null;
+  }
+
+  const history = await getHistorySnapshot(workspaceRoot, sessionId);
+  const recentUserMessages = history.chats
+    .filter((item) => item.role === "user")
+    .map((item) => item.message)
+    .reverse();
+
+  for (const userMessage of recentUserMessages) {
+    const rememberedName = parseNameStatement(userMessage);
+    if (rememberedName) {
+      return `Your name is ${rememberedName}.`;
+    }
+  }
+
+  return "I do not know your name yet. Tell me with: my name is <name>.";
+}
+
+async function tryAnswerFromWorkspaceFile(message: string, workspaceRoot?: string): Promise<string | null> {
+  if (!workspaceRoot) {
+    return null;
+  }
+
+  const filePath = parseAskedFilePath(message);
+  if (!filePath) {
+    return null;
+  }
+
+  const absolutePath = toSafeWorkspacePath(workspaceRoot, filePath);
+  let content = "";
+  try {
+    content = await readFile(absolutePath, "utf8");
+  } catch {
+    return `I could not read ${filePath}.`;
+  }
+
+  const oneSentence = summarizeInOneSentence(content);
+  return `The ${filePath} file is about ${oneSentence}`;
+}
+
 function readJsonBody<T>(req: import("node:http").IncomingMessage): Promise<T> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -275,6 +349,64 @@ function buildFallbackReply(message: string, workspaceRoot?: string): string {
     location,
     `Model endpoint configured: ${agentConfig.modelEndpoint}`
   ].join(" ");
+}
+
+function parseNameStatement(message: string): string | null {
+  const trimmed = message.trim();
+  const direct = trimmed.match(/\bmy name is\s+([a-z][a-z0-9'-]{1,40})\b/i);
+  if (direct?.[1]) {
+    return normalizeName(direct[1]);
+  }
+
+  const owner = trimmed.match(/\bi am\s+([a-z][a-z0-9'-]{1,40})\b/i);
+  if (owner?.[1] && /\bowner\b/i.test(trimmed)) {
+    return normalizeName(owner[1]);
+  }
+
+  return null;
+}
+
+function isNameQuestion(message: string): boolean {
+  const normalized = message.trim();
+  return /\bwhat(?:'s|\s+is|\s+was)\s+my\s+name\b/i.test(normalized) || /\bremember\b[\s\S]*\bmy\s+name\b/i.test(normalized);
+}
+
+function normalizeName(value: string): string {
+  const lower = value.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+function parseAskedFilePath(message: string): string | null {
+  const normalized = message.trim();
+  if (!/\bwhat\b|\binside\b|\bcontent\b|\bwritten\b/i.test(normalized)) {
+    return null;
+  }
+  const quoted = normalized.match(/["']([^"']+\.[a-z0-9]+)["']/i);
+  const typed = normalized.match(/\b([a-z0-9_./\\-]+\.(?:txt|md|json|csv|log))\b/i);
+  const target = quoted?.[1] ?? typed?.[1];
+  if (!target) {
+    return null;
+  }
+  return target.replace(/\\/g, "/");
+}
+
+function toSafeWorkspacePath(workspaceRoot: string, relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/");
+  const candidate = path.resolve(workspaceRoot, normalized);
+  const rootWithSep = workspaceRoot.endsWith(path.sep) ? workspaceRoot : `${workspaceRoot}${path.sep}`;
+  if (!candidate.startsWith(rootWithSep) && candidate !== workspaceRoot) {
+    throw new Error(`Unsafe path blocked: ${relativePath}`);
+  }
+  return candidate;
+}
+
+function summarizeInOneSentence(content: string): string {
+  const compact = content.replace(/\s+/g, " ").trim();
+  if (!compact) {
+    return "an empty file.";
+  }
+  const firstSentence = (compact.match(/[^.!?]+[.!?]/)?.[0] ?? compact.slice(0, 180)).trim();
+  return `${firstSentence.replace(/[.!?]+$/, "")}.`;
 }
 
 function buildPlan(task: string): AgentPlan {

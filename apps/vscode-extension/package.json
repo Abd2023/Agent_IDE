@@ -37,7 +37,7 @@
             "auto",
             "unrestricted"
           ],
-          "default": "auto",
+          "default": "unrestricted",
           "description": "Safety mode for agent file actions."
         }
       }

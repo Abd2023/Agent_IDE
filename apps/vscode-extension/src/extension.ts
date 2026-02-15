@@ -13,6 +13,7 @@ import type {
 export function activate(context: vscode.ExtensionContext): void {
   const command = vscode.commands.registerCommand("localAgentIDE.openChatPanel", () => {
     let runPollingTimer: NodeJS.Timeout | undefined;
+    let currentSessionId = createSessionId();
     const panel = vscode.window.createWebviewPanel(
       "localAgentIDE.chat",
       "Local Agent IDE",
@@ -24,6 +25,20 @@ export function activate(context: vscode.ExtensionContext): void {
     void loadHistoryIntoPanel(panel);
 
     const disposable = panel.webview.onDidReceiveMessage(async (message: unknown) => {
+      if (isSessionNewMessage(message)) {
+        currentSessionId = createSessionId();
+        stopRunPolling();
+        await loadHistoryIntoPanel(panel, currentSessionId);
+        return;
+      }
+
+      if (isSessionSelectMessage(message)) {
+        currentSessionId = message.payload.sessionId;
+        stopRunPolling();
+        await loadHistoryIntoPanel(panel, currentSessionId);
+        return;
+      }
+
       if (isApprovalDecisionMessage(message)) {
         try {
           await submitApprovalToAgentService(message.payload.runId, {
@@ -44,7 +59,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const text = message.payload.trim();
+      const text = (typeof message.payload === "string" ? message.payload : message.payload.text).trim();
       if (!text) {
         return;
       }
@@ -52,18 +67,23 @@ export function activate(context: vscode.ExtensionContext): void {
       try {
         const chatResponse = await sendToAgentService({
           message: text,
-          workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-        });
-        const planResponse = await requestPlanFromAgentService({
-          task: text,
           workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-          approvalMode: getApprovalMode()
+          sessionId: currentSessionId
         });
 
         panel.webview.postMessage({ type: "chat.response", payload: chatResponse });
-        panel.webview.postMessage({ type: "plan.response", payload: planResponse });
-        stopRunPolling();
-        startRunPolling(planResponse.runId);
+        const shouldRunTask = typeof message.payload === "string" ? false : Boolean(message.payload.runTask);
+        if (shouldRunTask) {
+          const planResponse = await requestPlanFromAgentService({
+            task: text,
+            workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            approvalMode: getApprovalMode(),
+            sessionId: currentSessionId
+          });
+          panel.webview.postMessage({ type: "plan.response", payload: planResponse });
+          stopRunPolling();
+          startRunPolling(planResponse.runId);
+        }
       } catch (error) {
         panel.webview.postMessage({
           type: "chat.error",
@@ -113,10 +133,27 @@ export function activate(context: vscode.ExtensionContext): void {
       runPollingTimer = undefined;
     }
 
-    async function loadHistoryIntoPanel(targetPanel: vscode.WebviewPanel): Promise<void> {
+    async function loadHistoryIntoPanel(targetPanel: vscode.WebviewPanel, forcedSessionId?: string): Promise<void> {
       try {
-        const history = await fetchHistoryFromAgentService(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!forcedSessionId) {
+          const all = await fetchHistoryFromAgentService(workspaceRoot);
+          if (all.sessions.length > 0) {
+            currentSessionId = all.sessions[all.sessions.length - 1].sessionId;
+          }
+        } else {
+          currentSessionId = forcedSessionId;
+        }
+
+        const history = await fetchHistoryFromAgentService(workspaceRoot, currentSessionId);
         targetPanel.webview.postMessage({ type: "history.load", payload: history });
+        targetPanel.webview.postMessage({
+          type: "session.state",
+          payload: {
+            currentSessionId,
+            sessions: history.sessions
+          }
+        });
       } catch (error) {
         targetPanel.webview.postMessage({
           type: "chat.error",
@@ -142,52 +179,101 @@ function getChatHtml(): string {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Local Agent IDE</title>
     <style>
+      :root {
+        --bg0: #12161f;
+        --bg1: #1c2431;
+        --panel: #0f141c;
+        --line: #324258;
+        --text: #e8edf6;
+        --muted: #9fb0c7;
+        --accent: #53c7a8;
+        --warn: #e7b152;
+      }
       body {
-        font-family: ui-sans-serif, system-ui, sans-serif;
-        padding: 16px;
+        font-family: "Segoe UI Variable Text", "Trebuchet MS", "Tahoma", sans-serif;
+        color: var(--text);
+        background: radial-gradient(1400px 600px at -10% -10%, #23314a 0%, transparent 50%),
+          radial-gradient(1200px 500px at 110% 0%, #20403a 0%, transparent 45%), var(--bg0);
+        padding: 10px;
         margin: 0;
       }
       .layout {
         display: grid;
-        grid-template-rows: auto 1fr auto;
+        grid-template-rows: auto auto minmax(150px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1fr) auto auto;
         height: 100vh;
-        gap: 12px;
-        padding: 16px;
+        gap: 10px;
+        padding: 10px;
+        box-sizing: border-box;
       }
       .meta {
         font-size: 12px;
-        opacity: 0.8;
+        color: var(--muted);
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .topbar h2 {
+        margin: 0;
+        letter-spacing: 0.3px;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .toolbar label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      select {
+        font: inherit;
+        color: var(--text);
+        background: #111926;
+        border: 1px solid #4f667e;
+        border-radius: 8px;
+        padding: 3px 8px;
       }
       .messages {
-        border: 1px solid #555;
-        border-radius: 8px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: color-mix(in oklab, var(--panel) 90%, black);
         padding: 10px;
         overflow-y: auto;
+        min-height: 0;
       }
       .plan {
-        border: 1px solid #555;
-        border-radius: 8px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: color-mix(in oklab, var(--panel) 88%, black);
         padding: 10px;
+        overflow-y: auto;
+        min-height: 0;
       }
       .plan h3 {
         margin: 0 0 8px 0;
         font-size: 14px;
+        color: var(--accent);
       }
       .plan .item {
         margin-bottom: 6px;
         padding: 6px;
         border-radius: 6px;
-        background: rgba(127, 127, 127, 0.08);
+        background: rgba(176, 204, 255, 0.08);
       }
       .trace {
-        border: 1px solid #555;
-        border-radius: 8px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: color-mix(in oklab, var(--panel) 88%, black);
         padding: 10px;
         overflow-y: auto;
+        min-height: 0;
       }
       .trace h3 {
         margin: 0 0 8px 0;
         font-size: 14px;
+        color: var(--accent);
       }
       .trace pre {
         white-space: pre-wrap;
@@ -196,10 +282,10 @@ function getChatHtml(): string {
         line-height: 1.35;
       }
       .approval {
-        border: 1px solid #996c00;
+        border: 1px solid var(--warn);
         border-radius: 8px;
         padding: 10px;
-        background: rgba(153, 108, 0, 0.12);
+        background: rgba(180, 117, 15, 0.15);
       }
       .approval h3 {
         margin: 0 0 8px 0;
@@ -212,9 +298,10 @@ function getChatHtml(): string {
       }
       .msg {
         margin-bottom: 8px;
-        padding: 8px;
-        border-radius: 6px;
-        background: rgba(127, 127, 127, 0.12);
+        padding: 9px 10px;
+        border-radius: 8px;
+        background: rgba(178, 204, 245, 0.11);
+        border-left: 3px solid rgba(83, 199, 168, 0.6);
       }
       .role {
         font-weight: 700;
@@ -222,31 +309,60 @@ function getChatHtml(): string {
       }
       .composer {
         display: grid;
-        grid-template-columns: 1fr auto;
+        grid-template-columns: 1fr auto auto;
         gap: 8px;
+        min-height: 70px;
       }
       textarea {
+        box-sizing: border-box;
         width: 100%;
         min-height: 72px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #0e1219;
+        color: var(--text);
+        padding: 10px;
         resize: vertical;
         font: inherit;
       }
       button {
         font: inherit;
+        border-radius: 8px;
+        border: 1px solid #4f667e;
+        color: var(--text);
+        background: #1c2a3d;
         padding: 0 14px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #22324a;
+      }
+      #runTask {
+        background: #1b3e39;
+        border-color: #2f7a6a;
+      }
+      @media (max-height: 860px) {
+        .layout {
+          grid-template-rows: auto auto minmax(120px, 1.1fr) minmax(120px, 1fr) minmax(120px, 1fr) auto auto;
+        }
       }
     </style>
   </head>
   <body>
     <div class="layout">
-      <div>
+      <div class="topbar">
         <h2>Local Agent IDE Chat</h2>
-        <div id="progressMeta" class="meta">Current: Step 6/6 in progress. Next: terminal/browser tools and richer traces.</div>
+        <div class="toolbar">
+          <label for="sessionSelect">Session</label>
+          <select id="sessionSelect"></select>
+          <button id="newChat">New Chat</button>
+        </div>
       </div>
+      <div id="progressMeta" class="meta">Chat mode: Ask questions with Send. Use Run Task only when you want actions/files/browser execution.</div>
       <div id="messages" class="messages"></div>
       <div id="plan" class="plan">
         <h3>Plan Checklist</h3>
-        <div class="meta">No plan yet. Send a task to generate one.</div>
+        <div class="meta">No run yet. Click Run Task to execute tools.</div>
       </div>
       <div id="trace" class="trace">
         <h3>Execution Trace</h3>
@@ -261,8 +377,9 @@ function getChatHtml(): string {
         </div>
       </div>
       <div class="composer">
-        <textarea id="input" placeholder="Describe the coding task..."></textarea>
+        <textarea id="input" placeholder="Ask a question, or describe a task..."></textarea>
         <button id="send">Send</button>
+        <button id="runTask">Run Task</button>
       </div>
     </div>
     <script>
@@ -273,6 +390,9 @@ function getChatHtml(): string {
       const progressMetaEl = document.getElementById("progressMeta");
       const inputEl = document.getElementById("input");
       const sendEl = document.getElementById("send");
+      const runTaskEl = document.getElementById("runTask");
+      const newChatEl = document.getElementById("newChat");
+      const sessionSelectEl = document.getElementById("sessionSelect");
       const approvalEl = document.getElementById("approval");
       const approvalTextEl = document.getElementById("approvalText");
       const approveBtnEl = document.getElementById("approveBtn");
@@ -341,6 +461,30 @@ function getChatHtml(): string {
         }
       }
 
+      function renderSessions(payload) {
+        const sessions = payload.sessions || [];
+        const current = payload.currentSessionId || "";
+        sessionSelectEl.innerHTML = "";
+
+        for (const item of sessions) {
+          const option = document.createElement("option");
+          option.value = item.sessionId;
+          option.textContent = item.sessionId.slice(-8);
+          if (item.sessionId === current) {
+            option.selected = true;
+          }
+          sessionSelectEl.appendChild(option);
+        }
+
+        if (!sessions.find((item) => item.sessionId === current) && current) {
+          const option = document.createElement("option");
+          option.value = current;
+          option.textContent = current.slice(-8);
+          option.selected = true;
+          sessionSelectEl.appendChild(option);
+        }
+      }
+
       function renderTrace(logs) {
         traceEl.innerHTML = "";
         const heading = document.createElement("h3");
@@ -379,12 +523,32 @@ function getChatHtml(): string {
         return "[ ]";
       }
 
-      sendEl.addEventListener("click", () => {
+      function submitMessage(runTask) {
         const text = inputEl.value.trim();
         if (!text) return;
         addMessage("You:", text);
-        vscode.postMessage({ type: "chat.send", payload: text });
+        vscode.postMessage({ type: "chat.send", payload: { text, runTask } });
         inputEl.value = "";
+      }
+
+      function resetRunPanels() {
+        latestRunId = null;
+        latestApprovalId = null;
+        approvalEl.style.display = "none";
+        planEl.innerHTML = "<h3>Plan Checklist</h3><div class='meta'>No run yet. Click Run Task to execute tools.</div>";
+        traceEl.innerHTML = "<h3>Execution Trace</h3><div class='meta'>No traces yet.</div>";
+        progressMetaEl.textContent = "Chat mode: Ask questions with Send. Use Run Task only when you want actions/files/browser execution.";
+      }
+
+      sendEl.addEventListener("click", () => submitMessage(false));
+      runTaskEl.addEventListener("click", () => submitMessage(true));
+      newChatEl.addEventListener("click", () => {
+        vscode.postMessage({ type: "session.new" });
+      });
+      sessionSelectEl.addEventListener("change", () => {
+        const sessionId = sessionSelectEl.value;
+        if (!sessionId) return;
+        vscode.postMessage({ type: "session.select", payload: { sessionId } });
       });
 
       approveBtnEl.addEventListener("click", () => {
@@ -405,7 +569,7 @@ function getChatHtml(): string {
 
       inputEl.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-          sendEl.click();
+          submitMessage(false);
         }
       });
 
@@ -429,7 +593,12 @@ function getChatHtml(): string {
           return;
         }
         if (msg.type === "history.load") {
+          resetRunPanels();
           restoreHistory(msg.payload);
+          return;
+        }
+        if (msg.type === "session.state") {
+          renderSessions(msg.payload);
           return;
         }
 
@@ -485,8 +654,15 @@ async function fetchRunStatusFromAgentService(runId: string): Promise<RunStatusR
   return (await response.json()) as RunStatusResponse;
 }
 
-async function fetchHistoryFromAgentService(workspaceRoot?: string): Promise<HistoryResponse> {
-  const query = workspaceRoot ? `?workspaceRoot=${encodeURIComponent(workspaceRoot)}` : "";
+async function fetchHistoryFromAgentService(workspaceRoot?: string, sessionId?: string): Promise<HistoryResponse> {
+  const params = new URLSearchParams();
+  if (workspaceRoot) {
+    params.set("workspaceRoot", workspaceRoot);
+  }
+  if (sessionId) {
+    params.set("sessionId", sessionId);
+  }
+  const query = params.toString() ? `?${params.toString()}` : "";
   const endpoint = getEndpoint(`/history${query}`);
   const response = await fetch(endpoint, { method: "GET" });
 
@@ -525,13 +701,52 @@ function getApprovalMode(): ApprovalMode {
   return "auto";
 }
 
-function isChatSendMessage(value: unknown): value is { type: "chat.send"; payload: string } {
+function isChatSendMessage(
+  value: unknown
+): value is { type: "chat.send"; payload: { text: string; runTask?: boolean } | string } {
   if (!value || typeof value !== "object") {
     return false;
   }
 
   const candidate = value as { type?: unknown; payload?: unknown };
-  return candidate.type === "chat.send" && typeof candidate.payload === "string";
+  if (candidate.type !== "chat.send" || candidate.payload === undefined || candidate.payload === null) {
+    return false;
+  }
+  if (typeof candidate.payload === "string") {
+    return true;
+  }
+  if (typeof candidate.payload !== "object") {
+    return false;
+  }
+  const payload = candidate.payload as { text?: unknown; runTask?: unknown };
+  if (typeof payload.text !== "string") {
+    return false;
+  }
+  return payload.runTask === undefined || typeof payload.runTask === "boolean";
+}
+
+function isSessionNewMessage(value: unknown): value is { type: "session.new" } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as { type?: unknown };
+  return candidate.type === "session.new";
+}
+
+function isSessionSelectMessage(value: unknown): value is { type: "session.select"; payload: { sessionId: string } } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as { type?: unknown; payload?: unknown };
+  if (candidate.type !== "session.select" || !candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+  const payload = candidate.payload as { sessionId?: unknown };
+  return typeof payload.sessionId === "string" && payload.sessionId.trim().length > 0;
+}
+
+function createSessionId(): string {
+  return `session_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function isApprovalDecisionMessage(

@@ -28,6 +28,7 @@ export interface RunState {
 export interface ChatRequest {
   message: string;
   workspaceRoot?: string;
+  sessionId?: string;
 }
 
 export interface ChatResponse {
@@ -41,6 +42,7 @@ export interface PlanRequest {
   task: string;
   workspaceRoot?: string;
   approvalMode?: ApprovalMode;
+  sessionId?: string;
 }
 
 export interface PlanResponse {
@@ -79,6 +81,7 @@ export interface ChatHistoryItem {
   role: "user" | "agent";
   message: string;
   workspaceRoot?: string;
+  sessionId?: string;
   timestamp: string;
 }
 
@@ -86,6 +89,7 @@ export interface RunHistoryItem {
   runId: string;
   task: string;
   workspaceRoot?: string;
+  sessionId?: string;
   approvalMode: ApprovalMode;
   plan: AgentPlan;
   isFinished: boolean;
@@ -93,7 +97,13 @@ export interface RunHistoryItem {
   logs: string[];
 }
 
+export interface HistorySessionItem {
+  sessionId: string;
+  updatedAt: string;
+}
+
 export interface HistoryResponse {
   chats: ChatHistoryItem[];
   runs: RunHistoryItem[];
+  sessions: HistorySessionItem[];
 }
