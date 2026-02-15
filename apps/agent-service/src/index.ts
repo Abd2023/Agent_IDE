@@ -1,10 +1,21 @@
 import { createServer } from "node:http";
 import { agentConfig } from "./config.js";
-import type { AgentPlan, ApprovalMode, ChatRequest, ChatResponse, PlanRequest, PlanResponse } from "@local-agent-ide/core";
+import type {
+  ApprovalDecisionRequest,
+  AgentPlan,
+  ApprovalMode,
+  ChatRequest,
+  ChatResponse,
+  HistoryResponse,
+  PlanRequest,
+  PlanResponse
+} from "@local-agent-ide/core";
 import { executeRun, getRunStatus, type ExecutionRun } from "./executor.js";
 import { generateChatReply } from "./model.js";
+import { appendChatHistory, getHistorySnapshot, upsertRunHistory } from "./storage.js";
 
 const runs = new Map<string, ExecutionRun>();
+const approvalResolvers = new Map<string, { approvalId: string; resolve: (approved: boolean) => void }>();
 
 const server = createServer((req, res) => {
   const requestUrl = new URL(req.url ?? "/", "http://localhost");
@@ -22,6 +33,20 @@ const server = createServer((req, res) => {
     return;
   }
 
+  if (req.method === "GET" && pathname === "/history") {
+    const workspaceRoot = requestUrl.searchParams.get("workspaceRoot") ?? undefined;
+    getHistorySnapshot(workspaceRoot)
+      .then((history) => {
+        const response: HistoryResponse = history;
+        sendJson(res, 200, response);
+      })
+      .catch((error) => {
+        console.error("[agent-service] failed to read history", error);
+        sendJson(res, 500, { error: "history_read_failed" });
+      });
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/chat") {
     readJsonBody<ChatRequest>(req)
       .then((body) => {
@@ -30,8 +55,20 @@ const server = createServer((req, res) => {
           return;
         }
 
+        void appendChatHistory({
+          role: "user",
+          message: body.message.trim(),
+          workspaceRoot: body.workspaceRoot
+        });
+
         generateChatReply(body.message, body.workspaceRoot)
           .then((reply) => {
+            void appendChatHistory({
+              role: "agent",
+              message: reply,
+              workspaceRoot: body.workspaceRoot
+            });
+
             const response: ChatResponse = {
               reply,
               currentStep: "Step 5/6: Approval modes and safety controls are active",
@@ -42,8 +79,14 @@ const server = createServer((req, res) => {
           })
           .catch((error) => {
             console.warn("[agent-service] model chat failed, using fallback", error);
+            const fallback = buildFallbackReply(body.message, body.workspaceRoot);
+            void appendChatHistory({
+              role: "agent",
+              message: fallback,
+              workspaceRoot: body.workspaceRoot
+            });
             const response: ChatResponse = {
-              reply: buildFallbackReply(body.message, body.workspaceRoot),
+              reply: fallback,
               currentStep: "Step 5/6: Approval modes and safety controls are active",
               nextStep: "Step 6/6: Add terminal/browser tools and richer traces",
               timestamp: new Date().toISOString()
@@ -75,9 +118,48 @@ const server = createServer((req, res) => {
           plan,
           isFinished: false,
           updatedAt: new Date().toISOString(),
-          logs: []
+          logs: [],
+          requestApproval: ({ tool, summary }) =>
+            new Promise<boolean>((resolve) => {
+              const approvalId = createRunId();
+              run.pendingApproval = {
+                approvalId,
+                tool,
+                summary,
+                createdAt: new Date().toISOString()
+              };
+              run.updatedAt = new Date().toISOString();
+              run.logs.push(`[${run.updatedAt}] awaiting_approval: ${summary}`);
+              if (run.logs.length > 200) {
+                run.logs.splice(0, run.logs.length - 200);
+              }
+              approvalResolvers.set(run.runId, { approvalId, resolve });
+              run.onUpdate?.(run);
+            }),
+          onUpdate: (updatedRun) => {
+            void upsertRunHistory({
+              runId: updatedRun.runId,
+              task: updatedRun.task,
+              workspaceRoot: updatedRun.workspaceRoot,
+              approvalMode: updatedRun.approvalMode,
+              plan: updatedRun.plan,
+              isFinished: updatedRun.isFinished,
+              updatedAt: updatedRun.updatedAt,
+              logs: updatedRun.logs
+            });
+          }
         };
         runs.set(runId, run);
+        void upsertRunHistory({
+          runId: run.runId,
+          task: run.task,
+          workspaceRoot: run.workspaceRoot,
+          approvalMode: run.approvalMode,
+          plan: run.plan,
+          isFinished: run.isFinished,
+          updatedAt: run.updatedAt,
+          logs: run.logs
+        });
         void executeRun(run);
 
         const response: PlanResponse = {
@@ -106,6 +188,45 @@ const server = createServer((req, res) => {
 
     const progress = getRunStatus(run);
     sendJson(res, 200, progress);
+    return;
+  }
+
+  const approvalRunId = getRunApprovalIdFromPath(pathname);
+  if (req.method === "POST" && approvalRunId) {
+    readJsonBody<ApprovalDecisionRequest>(req)
+      .then((body) => {
+        const run = runs.get(approvalRunId);
+        if (!run) {
+          sendJson(res, 404, { error: "run_not_found" });
+          return;
+        }
+
+        const resolverState = approvalResolvers.get(approvalRunId);
+        if (!resolverState || !run.pendingApproval) {
+          sendJson(res, 409, { error: "no_pending_approval" });
+          return;
+        }
+
+        if (!body || (body.decision !== "approve" && body.decision !== "reject")) {
+          sendJson(res, 400, { error: "invalid_decision" });
+          return;
+        }
+
+        if (body.approvalId !== resolverState.approvalId || body.approvalId !== run.pendingApproval.approvalId) {
+          sendJson(res, 409, { error: "approval_id_mismatch" });
+          return;
+        }
+
+        approvalResolvers.delete(approvalRunId);
+        run.pendingApproval = undefined;
+        run.updatedAt = new Date().toISOString();
+        run.onUpdate?.(run);
+        resolverState.resolve(body.decision === "approve");
+        sendJson(res, 200, { ok: true });
+      })
+      .catch(() => {
+        sendJson(res, 400, { error: "invalid_json" });
+      });
     return;
   }
 
@@ -209,5 +330,10 @@ function normalizeApprovalMode(mode: unknown): ApprovalMode {
 
 function getRunIdFromPath(pathname: string): string | null {
   const match = /^\/runs\/([^/]+)$/.exec(pathname);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function getRunApprovalIdFromPath(pathname: string): string | null {
+  const match = /^\/runs\/([^/]+)\/approval$/.exec(pathname);
   return match ? decodeURIComponent(match[1]) : null;
 }

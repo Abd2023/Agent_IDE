@@ -1,1 +1,0 @@
-Node.js version: (output of node -v)

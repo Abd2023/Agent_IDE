@@ -59,4 +59,41 @@ export interface RunStatusResponse {
   nextStep: string;
   timestamp: string;
   logs: string[];
+  pendingApproval?: PendingApprovalRequest;
+}
+
+export interface PendingApprovalRequest {
+  approvalId: string;
+  tool: string;
+  summary: string;
+  createdAt: string;
+}
+
+export interface ApprovalDecisionRequest {
+  approvalId: string;
+  decision: "approve" | "reject";
+}
+
+export interface ChatHistoryItem {
+  id: string;
+  role: "user" | "agent";
+  message: string;
+  workspaceRoot?: string;
+  timestamp: string;
+}
+
+export interface RunHistoryItem {
+  runId: string;
+  task: string;
+  workspaceRoot?: string;
+  approvalMode: ApprovalMode;
+  plan: AgentPlan;
+  isFinished: boolean;
+  updatedAt: string;
+  logs: string[];
+}
+
+export interface HistoryResponse {
+  chats: ChatHistoryItem[];
+  runs: RunHistoryItem[];
 }

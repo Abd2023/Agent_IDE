@@ -17,8 +17,8 @@ This repository is the base scaffold for a local, private, plan-and-execute codi
 
 ## Build Progress
 
-- Current step: `Step 7` - Improve reliability for follow-up tasks and add persistent run history.
-- Next step: Add interactive approval UI for `ask` mode.
+- Current step: `Step 8` - Reliability pass (follow-up handling, tool selection, per-project memory indexing).
+- Next step: Strengthen multi-attempt planning and persistent memory retrieval quality.
 
 ## Quick start
 
@@ -40,7 +40,14 @@ This repository is the base scaffold for a local, private, plan-and-execute codi
   - `MODEL_ID`
   - `MODEL_API_KEY`
   - `APPROVAL_MODE` (`ask` | `auto` | `unrestricted`)
+  - `BROWSER_HEADLESS` (`true` | `false`, default `true`)
+  - `BROWSER_SLOW_MO_MS` (number, default `0`)
+  - `BROWSER_KEEP_OPEN_MS` (number, default `0`)
 
 ## Notes
 
 - This is a base structure only. Feature implementation will be added step by step.
+- History persistence is now enabled in `./.local-agent-ide/history.json` (chats + run snapshots).
+- Browser automation tools are implemented with Playwright (`browser_open`, `browser_click`, `browser_type`, `browser_wait_for`, `browser_screenshot`, `browser_eval`).
+- To watch browser actions live, run agent-service with `BROWSER_HEADLESS=false` (optionally add `BROWSER_SLOW_MO_MS=200`).
+- If Chromium is not installed yet, run: `npx playwright install chromium`.

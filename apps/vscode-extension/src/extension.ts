@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
 import type {
+  ApprovalDecisionRequest,
   ApprovalMode,
   ChatRequest,
   ChatResponse,
+  HistoryResponse,
   PlanRequest,
   PlanResponse,
   RunStatusResponse
@@ -19,8 +21,25 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     panel.webview.html = getChatHtml();
+    void loadHistoryIntoPanel(panel);
 
     const disposable = panel.webview.onDidReceiveMessage(async (message: unknown) => {
+      if (isApprovalDecisionMessage(message)) {
+        try {
+          await submitApprovalToAgentService(message.payload.runId, {
+            approvalId: message.payload.approvalId,
+            decision: message.payload.decision
+          });
+        } catch (error) {
+          panel.webview.postMessage({
+            type: "chat.error",
+            payload: "Failed to submit approval decision."
+          });
+          console.error("[local-agent-ide] approval submit failed", error);
+        }
+        return;
+      }
+
       if (!isChatSendMessage(message)) {
         return;
       }
@@ -93,6 +112,19 @@ export function activate(context: vscode.ExtensionContext): void {
       clearInterval(runPollingTimer);
       runPollingTimer = undefined;
     }
+
+    async function loadHistoryIntoPanel(targetPanel: vscode.WebviewPanel): Promise<void> {
+      try {
+        const history = await fetchHistoryFromAgentService(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+        targetPanel.webview.postMessage({ type: "history.load", payload: history });
+      } catch (error) {
+        targetPanel.webview.postMessage({
+          type: "chat.error",
+          payload: "Could not load persisted session history."
+        });
+        console.error("[local-agent-ide] history load failed", error);
+      }
+    }
   });
 
   context.subscriptions.push(command);
@@ -163,6 +195,21 @@ function getChatHtml(): string {
         font-size: 12px;
         line-height: 1.35;
       }
+      .approval {
+        border: 1px solid #996c00;
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(153, 108, 0, 0.12);
+      }
+      .approval h3 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+      }
+      .approval .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
       .msg {
         margin-bottom: 8px;
         padding: 8px;
@@ -205,6 +252,14 @@ function getChatHtml(): string {
         <h3>Execution Trace</h3>
         <div class="meta">No traces yet.</div>
       </div>
+      <div id="approval" class="approval" style="display:none;">
+        <h3>Approval Required</h3>
+        <div id="approvalText" class="meta"></div>
+        <div class="actions">
+          <button id="approveBtn">Approve</button>
+          <button id="rejectBtn">Reject</button>
+        </div>
+      </div>
       <div class="composer">
         <textarea id="input" placeholder="Describe the coding task..."></textarea>
         <button id="send">Send</button>
@@ -218,6 +273,12 @@ function getChatHtml(): string {
       const progressMetaEl = document.getElementById("progressMeta");
       const inputEl = document.getElementById("input");
       const sendEl = document.getElementById("send");
+      const approvalEl = document.getElementById("approval");
+      const approvalTextEl = document.getElementById("approvalText");
+      const approveBtnEl = document.getElementById("approveBtn");
+      const rejectBtnEl = document.getElementById("rejectBtn");
+      let latestRunId = null;
+      let latestApprovalId = null;
 
       function addMessage(role, text) {
         const node = document.createElement("div");
@@ -232,6 +293,7 @@ function getChatHtml(): string {
       }
 
       function renderPlan(payload) {
+        latestRunId = payload.runId;
         planEl.innerHTML = "";
 
         const heading = document.createElement("h3");
@@ -253,6 +315,30 @@ function getChatHtml(): string {
 
         progressMetaEl.textContent = "Current: " + payload.currentStep + " | Next: " + payload.nextStep;
         renderTrace(payload.logs || []);
+        renderApproval(payload.pendingApproval || null);
+      }
+
+      function restoreHistory(payload) {
+        messagesEl.innerHTML = "";
+        for (const item of payload.chats || []) {
+          const role = item.role === "user" ? "You:" : "Agent:";
+          addMessage(role, item.message);
+        }
+
+        const runs = payload.runs || [];
+        if (runs.length > 0) {
+          const latest = runs[runs.length - 1];
+          renderPlan({
+            runId: latest.runId,
+            plan: latest.plan,
+            isFinished: latest.isFinished,
+            currentStep: latest.isFinished ? "Restored completed run" : "Restored active run",
+            nextStep: latest.isFinished ? "Send a new task to start another run" : "Run can continue on new tasks",
+            timestamp: latest.updatedAt,
+            logs: latest.logs || []
+          });
+          addMessage("System:", "Previous session restored.");
+        }
       }
 
       function renderTrace(logs) {
@@ -274,6 +360,18 @@ function getChatHtml(): string {
         traceEl.appendChild(block);
       }
 
+      function renderApproval(pendingApproval) {
+        if (!pendingApproval) {
+          latestApprovalId = null;
+          approvalEl.style.display = "none";
+          return;
+        }
+
+        latestApprovalId = pendingApproval.approvalId;
+        approvalTextEl.textContent = pendingApproval.tool + ": " + pendingApproval.summary;
+        approvalEl.style.display = "block";
+      }
+
       function statusIcon(status) {
         if (status === "completed") return "[x]";
         if (status === "in_progress") return "[~]";
@@ -287,6 +385,22 @@ function getChatHtml(): string {
         addMessage("You:", text);
         vscode.postMessage({ type: "chat.send", payload: text });
         inputEl.value = "";
+      });
+
+      approveBtnEl.addEventListener("click", () => {
+        if (!latestRunId || !latestApprovalId) return;
+        vscode.postMessage({
+          type: "approval.submit",
+          payload: { runId: latestRunId, approvalId: latestApprovalId, decision: "approve" }
+        });
+      });
+
+      rejectBtnEl.addEventListener("click", () => {
+        if (!latestRunId || !latestApprovalId) return;
+        vscode.postMessage({
+          type: "approval.submit",
+          payload: { runId: latestRunId, approvalId: latestApprovalId, decision: "reject" }
+        });
       });
 
       inputEl.addEventListener("keydown", (event) => {
@@ -312,6 +426,10 @@ function getChatHtml(): string {
           if (msg.payload.isFinished) {
             addMessage("Agent:", "Checklist execution finished.");
           }
+          return;
+        }
+        if (msg.type === "history.load") {
+          restoreHistory(msg.payload);
           return;
         }
 
@@ -367,6 +485,31 @@ async function fetchRunStatusFromAgentService(runId: string): Promise<RunStatusR
   return (await response.json()) as RunStatusResponse;
 }
 
+async function fetchHistoryFromAgentService(workspaceRoot?: string): Promise<HistoryResponse> {
+  const query = workspaceRoot ? `?workspaceRoot=${encodeURIComponent(workspaceRoot)}` : "";
+  const endpoint = getEndpoint(`/history${query}`);
+  const response = await fetch(endpoint, { method: "GET" });
+
+  if (!response.ok) {
+    throw new Error(`agent-service returned status ${response.status}`);
+  }
+
+  return (await response.json()) as HistoryResponse;
+}
+
+async function submitApprovalToAgentService(runId: string, request: ApprovalDecisionRequest): Promise<void> {
+  const endpoint = getEndpoint(`/runs/${encodeURIComponent(runId)}/approval`);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request)
+  });
+
+  if (!response.ok) {
+    throw new Error(`agent-service returned status ${response.status}`);
+  }
+}
+
 function getEndpoint(path: string): string {
   const config = vscode.workspace.getConfiguration("localAgentIDE");
   const baseUrl = config.get<string>("agentServiceUrl", "http://localhost:4000");
@@ -389,4 +532,24 @@ function isChatSendMessage(value: unknown): value is { type: "chat.send"; payloa
 
   const candidate = value as { type?: unknown; payload?: unknown };
   return candidate.type === "chat.send" && typeof candidate.payload === "string";
+}
+
+function isApprovalDecisionMessage(
+  value: unknown
+): value is { type: "approval.submit"; payload: { runId: string; approvalId: string; decision: "approve" | "reject" } } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as { type?: unknown; payload?: unknown };
+  if (candidate.type !== "approval.submit" || !candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+
+  const payload = candidate.payload as { runId?: unknown; approvalId?: unknown; decision?: unknown };
+  return (
+    typeof payload.runId === "string" &&
+    typeof payload.approvalId === "string" &&
+    (payload.decision === "approve" || payload.decision === "reject")
+  );
 }
