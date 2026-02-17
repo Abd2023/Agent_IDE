@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tic Tac Toe</title>
+  <style>
+    :root { --bg: #0b1220; --panel: #152238; --line: #2f4469; --text: #e6edf7; --x: #60a5fa; --o: #f472b6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(900px 400px at 0% 0%, #1e3a8a 0%, transparent 50%), var(--bg); color: var(--text); font-family: "Segoe UI", sans-serif; }
+    .wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; width: min(92vw, 420px); box-shadow: 0 20px 45px rgba(0,0,0,.35); }
+    h1 { margin: 0 0 12px; font-size: 1.4rem; }
+    .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    button.cell { height: 82px; font-size: 2rem; font-weight: 700; border-radius: 10px; border: 1px solid var(--line); background: #0f1a2d; color: var(--text); cursor: pointer; }
+    button.cell[data-v='X'] { color: var(--x); }
+    button.cell[data-v='O'] { color: var(--o); }
+    .meta { margin-top: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .status { font-size: .95rem; opacity: .95; }
+    .reset { border: 1px solid var(--line); background: #10213b; color: var(--text); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Tic Tac Toe</h1>
+    <section class="board" id="board"></section>
+    <div class="meta">
+      <div class="status" id="status">Turn: X</div>
+      <button class="reset" id="reset">Reset</button>
+    </div>
+  </main>
+  <script>
+    const boardEl = document.getElementById('board');
+    const statusEl = document.getElementById('status');
+    const resetEl = document.getElementById('reset');
+    const board = Array(9).fill('');
+    let turn = 'X';
+    let done = false;
+    const wins = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+    function render() {
+      boardEl.innerHTML = '';
+      board.forEach((value, i) => {
+        const b = document.createElement('button');
+        b.className = 'cell';
+        b.dataset.i = String(i);
+        b.dataset.v = value;
+        b.textContent = value;
+        b.disabled = done || Boolean(value);
+        boardEl.appendChild(b);
+      });
+      statusEl.textContent = done ? statusEl.textContent : `Turn: ${turn}`;
+    }
+    function checkWin(v) { return wins.some(([a,b,c]) => board[a]===v && board[b]===v && board[c]===v); }
+    boardEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('button.cell');
+      if (!btn || done) return;
+      const idx = Number(btn.dataset.i);
+      if (board[idx]) return;
+      board[idx] = turn;
+      if (checkWin(turn)) { done = true; statusEl.textContent = `Winner: ${turn}`; render(); return; }
+      if (board.every(Boolean)) { done = true; statusEl.textContent = 'Draw'; render(); return; }
+      turn = turn === 'X' ? 'O' : 'X';
+      render();
+    });
+    resetEl.addEventListener('click', () => { board.fill(''); turn = 'X'; done = false; statusEl.textContent = 'Turn: X'; render(); });
+    render();
+  </script>
+</body>
+</html>

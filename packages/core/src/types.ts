@@ -100,6 +100,7 @@ export interface RunHistoryItem {
 export interface HistorySessionItem {
   sessionId: string;
   updatedAt: string;
+  title: string;
 }
 
 export interface HistoryResponse {

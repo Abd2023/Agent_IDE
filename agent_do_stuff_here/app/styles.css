@@ -1,0 +1,26 @@
+:root {
+  --bg: #0b1220;
+  --fg: #e6edf7;
+  --accent: #2f81f7;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--fg);
+  background: linear-gradient(135deg, #0b1220 0%, #1f2a44 100%);
+  font-family: "Segoe UI", sans-serif;
+}
+.app {
+  padding: 24px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+}
+button {
+  border: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: white;
+  background: var(--accent);
+}

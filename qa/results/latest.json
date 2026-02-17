@@ -1,0 +1,505 @@
+{
+  "startedAt": "2026-02-17T16:34:27.655Z",
+  "finishedAt": "2026-02-17T16:37:04.396Z",
+  "mode": "full",
+  "serviceUrl": "http://localhost:4000",
+  "workspaceRoot": "C:\\fun_project\\fun_project_2\\agent_do_stuff_here",
+  "total": 41,
+  "passCount": 32,
+  "failCount": 9,
+  "passRate": 78.05,
+  "byCategory": {
+    "edit_existing": {
+      "total": 10,
+      "pass": 7,
+      "fail": 3,
+      "passRate": 70
+    },
+    "memory_session": {
+      "total": 1,
+      "pass": 1,
+      "fail": 0,
+      "passRate": 100
+    },
+    "create_new": {
+      "total": 3,
+      "pass": 3,
+      "fail": 0,
+      "passRate": 100
+    },
+    "browser_interaction": {
+      "total": 5,
+      "pass": 5,
+      "fail": 0,
+      "passRate": 100
+    },
+    "debug": {
+      "total": 1,
+      "pass": 1,
+      "fail": 0,
+      "passRate": 100
+    },
+    "workspace_management": {
+      "total": 4,
+      "pass": 4,
+      "fail": 0,
+      "passRate": 100
+    },
+    "code_generation_refactoring": {
+      "total": 5,
+      "pass": 2,
+      "fail": 3,
+      "passRate": 40
+    },
+    "documentation_understanding": {
+      "total": 4,
+      "pass": 4,
+      "fail": 0,
+      "passRate": 100
+    },
+    "debug_execution_loop": {
+      "total": 4,
+      "pass": 3,
+      "fail": 1,
+      "passRate": 75
+    },
+    "edge_cases_stress": {
+      "total": 4,
+      "pass": 2,
+      "fail": 2,
+      "passRate": 50
+    }
+  },
+  "results": [
+    {
+      "id": "edit_title_basic",
+      "title": "Change HTML title in target file",
+      "category": "edit_existing",
+      "severity": "critical",
+      "passed": true,
+      "durationMs": 1084,
+      "runId": "run_mlqtpp8ig8t6",
+      "failures": []
+    },
+    {
+      "id": "edit_text_case_insensitive",
+      "title": "Replace greeting with case variance",
+      "category": "edit_existing",
+      "severity": "critical",
+      "passed": false,
+      "durationMs": 26272,
+      "runId": "run_mlqtpq14x1py",
+      "failures": [
+        "plan_success failed (implement)",
+        "Regex /hello world/i failed on index.html"
+      ]
+    },
+    {
+      "id": "edit_timer_button_blue",
+      "title": "Change timer start button green to blue",
+      "category": "edit_existing",
+      "severity": "critical",
+      "passed": true,
+      "durationMs": 7090,
+      "runId": "run_mlqtqaaztunl",
+      "failures": []
+    },
+    {
+      "id": "edit_snake_border_collision",
+      "title": "Snake wall collision should game over",
+      "category": "edit_existing",
+      "severity": "critical",
+      "passed": false,
+      "durationMs": 8110,
+      "runId": "run_mlqtqfrvsnbh",
+      "failures": [
+        "Expected \"wall collision -> game over\" in snake_game.html"
+      ]
+    },
+    {
+      "id": "edit_modern_design",
+      "title": "Apply modern design and background",
+      "category": "edit_existing",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1013,
+      "runId": "run_mlqtqm16ergo",
+      "failures": []
+    },
+    {
+      "id": "summarize_url_to_output",
+      "title": "Summarize URL into output file",
+      "category": "edit_existing",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 48560,
+      "runId": "run_mlqtqmta5iia",
+      "failures": []
+    },
+    {
+      "id": "file_memory_question",
+      "title": "Answer question from output file",
+      "category": "memory_session",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 10,
+      "runId": "run_mlqtroa9mtbm",
+      "failures": []
+    },
+    {
+      "id": "create_tic_tac_toe",
+      "title": "Create tic tac toe game and run it",
+      "category": "create_new",
+      "severity": "critical",
+      "passed": true,
+      "durationMs": 4056,
+      "runId": "run_mlqtroakalys",
+      "failures": []
+    },
+    {
+      "id": "create_app_skeleton",
+      "title": "Create app skeleton boilerplate",
+      "category": "create_new",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 2567,
+      "runId": "run_mlqtrrf6gkpe",
+      "failures": []
+    },
+    {
+      "id": "browser_local_open_screenshot",
+      "title": "Open local html and screenshot",
+      "category": "browser_interaction",
+      "severity": "critical",
+      "passed": true,
+      "durationMs": 2028,
+      "runId": "run_mlqtrtejeyoe",
+      "failures": []
+    },
+    {
+      "id": "browser_eval_local_title",
+      "title": "Return document.title on local file",
+      "category": "browser_interaction",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1016,
+      "runId": "run_mlqtruyu9hqe",
+      "failures": []
+    },
+    {
+      "id": "browser_search_screenshot",
+      "title": "Search in browser and capture screenshot",
+      "category": "browser_interaction",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 6077,
+      "runId": "run_mlqtrvr2813w",
+      "failures": []
+    },
+    {
+      "id": "edit_no_overwrite_guard",
+      "title": "Change title without deleting page body",
+      "category": "edit_existing",
+      "severity": "critical",
+      "passed": false,
+      "durationMs": 1020,
+      "runId": "run_mlqts0fwdzo9",
+      "failures": [
+        "Expected \"<title>My Awesome Snake Game</title>\" in snake_game.html"
+      ]
+    },
+    {
+      "id": "create_simple_file",
+      "title": "Create new text file from prompt",
+      "category": "create_new",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1023,
+      "runId": "run_mlqts186rrb9",
+      "failures": []
+    },
+    {
+      "id": "debug_retry_color_fix",
+      "title": "Debug style issue and fix target",
+      "category": "debug",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1011,
+      "runId": "run_mlqts20mrp6r",
+      "failures": []
+    },
+    {
+      "id": "browser_remote_screenshot",
+      "title": "Open remote site and screenshot",
+      "category": "browser_interaction",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 3043,
+      "runId": "run_mlqts2sri9gm",
+      "failures": []
+    },
+    {
+      "id": "edit_markdown_replace",
+      "title": "Replace typo inside markdown",
+      "category": "edit_existing",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1024,
+      "runId": "run_mlqts558t6pk",
+      "failures": []
+    },
+    {
+      "id": "edit_preserve_other_lines",
+      "title": "Edit only target text and keep other lines",
+      "category": "edit_existing",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1013,
+      "runId": "run_mlqts5xof6c3",
+      "failures": []
+    },
+    {
+      "id": "browser_eval_remote_title",
+      "title": "Open google and evaluate document.title",
+      "category": "browser_interaction",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 4040,
+      "runId": "run_mlqts6pre3bx",
+      "failures": []
+    },
+    {
+      "id": "edit_timer_generic_green_to_blue",
+      "title": "Generic CSS green to blue replacement",
+      "category": "edit_existing",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1017,
+      "runId": "run_mlqts9u3biu6",
+      "failures": []
+    },
+    {
+      "id": "ws_inventory_extensions",
+      "title": "Inventory check for file extensions",
+      "category": "workspace_management",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1029,
+      "runId": "run_mlqtsamgmsz5",
+      "failures": []
+    },
+    {
+      "id": "ws_cleanup_empty_dirs",
+      "title": "Delete empty directories",
+      "category": "workspace_management",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1017,
+      "runId": "run_mlqtsbezl3ml",
+      "failures": []
+    },
+    {
+      "id": "ws_migrate_root_images",
+      "title": "Move root images and update index references",
+      "category": "workspace_management",
+      "severity": "critical",
+      "passed": true,
+      "durationMs": 1030,
+      "runId": "run_mlqtsc77k2tn",
+      "failures": []
+    },
+    {
+      "id": "ws_log_analysis_econnrefused",
+      "title": "Analyze log and locate config port definition",
+      "category": "workspace_management",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1020,
+      "runId": "run_mlqtsczt0fil",
+      "failures": []
+    },
+    {
+      "id": "codegen_fastapi_products_crud",
+      "title": "Generate FastAPI Product CRUD boilerplate",
+      "category": "code_generation_refactoring",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1014,
+      "runId": "run_mlqtsds4jrp3",
+      "failures": []
+    },
+    {
+      "id": "codegen_typesafety_any_to_interfaces",
+      "title": "Replace any types with interfaces",
+      "category": "code_generation_refactoring",
+      "severity": "critical",
+      "passed": false,
+      "durationMs": 1020,
+      "runId": "run_mlqtsekbf53w",
+      "failures": [
+        "plan_success failed (implement)"
+      ]
+    },
+    {
+      "id": "codegen_modernize_var_to_let_const",
+      "title": "Convert var to let/const in src",
+      "category": "code_generation_refactoring",
+      "severity": "high",
+      "passed": false,
+      "durationMs": 1141,
+      "runId": "run_mlqtsfcoh36h",
+      "failures": [
+        "plan_success failed (implement)"
+      ]
+    },
+    {
+      "id": "codegen_unittest_edge_cases",
+      "title": "Generate edge-case unittest file",
+      "category": "code_generation_refactoring",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1022,
+      "runId": "run_mlqtsg8c1kf5",
+      "failures": []
+    },
+    {
+      "id": "codegen_css_to_tailwind_header",
+      "title": "Convert inline styles to Tailwind",
+      "category": "code_generation_refactoring",
+      "severity": "normal",
+      "passed": false,
+      "durationMs": 1016,
+      "runId": "run_mlqtsh0qihod",
+      "failures": [
+        "plan_success failed (implement)"
+      ]
+    },
+    {
+      "id": "docs_readme_creator",
+      "title": "Generate README with install and entry point",
+      "category": "documentation_understanding",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1015,
+      "runId": "run_mlqtshsyish1",
+      "failures": []
+    },
+    {
+      "id": "docs_docstring_audit",
+      "title": "Add docstrings for long functions",
+      "category": "documentation_understanding",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 1018,
+      "runId": "run_mlqtsil49uua",
+      "failures": []
+    },
+    {
+      "id": "docs_dependency_graph_report",
+      "title": "Generate dependency graph report",
+      "category": "documentation_understanding",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 1012,
+      "runId": "run_mlqtsjdj9u43",
+      "failures": []
+    },
+    {
+      "id": "docs_commit_message_suggestion",
+      "title": "Suggest semantic commit message from recent edits",
+      "category": "documentation_understanding",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 1013,
+      "runId": "run_mlqtsk5knn2i",
+      "failures": []
+    },
+    {
+      "id": "debug_lint_fix_loop",
+      "title": "Run eslint and fix errors",
+      "category": "debug_execution_loop",
+      "severity": "high",
+      "passed": false,
+      "durationMs": 1017,
+      "runId": "run_mlqtskxpi4fz",
+      "failures": [
+        "plan_success failed (implement)",
+        "Regex /==/ unexpectedly matched src/lint-target.js"
+      ]
+    },
+    {
+      "id": "debug_dependency_repair_report",
+      "title": "Handle npm install conflict and suggest downgrade",
+      "category": "debug_execution_loop",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 14143,
+      "runId": "run_mlqtslpxihcq",
+      "failures": []
+    },
+    {
+      "id": "debug_performance_profile_python",
+      "title": "Profile python script and propose optimization",
+      "category": "debug_execution_loop",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 2029,
+      "runId": "run_mlqtswmu92ak",
+      "failures": []
+    },
+    {
+      "id": "debug_integration_health_check",
+      "title": "Integration test for local health endpoint",
+      "category": "debug_execution_loop",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1032,
+      "runId": "run_mlqtsy7h99wv",
+      "failures": []
+    },
+    {
+      "id": "edge_ambiguous_modern_ui",
+      "title": "Ambiguous modern UI request",
+      "category": "edge_cases_stress",
+      "severity": "normal",
+      "passed": true,
+      "durationMs": 1017,
+      "runId": "run_mlqtsyzux1vq",
+      "failures": []
+    },
+    {
+      "id": "edge_security_dangerous_html",
+      "title": "Replace dangerouslySetInnerHTML usage",
+      "category": "edge_cases_stress",
+      "severity": "critical",
+      "passed": false,
+      "durationMs": 1009,
+      "runId": "run_mlqtszs57qj8",
+      "failures": [
+        "plan_success failed (implement)"
+      ]
+    },
+    {
+      "id": "edge_large_scale_userdata_refactor",
+      "title": "Rename userData to accountInfo safely",
+      "category": "edge_cases_stress",
+      "severity": "high",
+      "passed": false,
+      "durationMs": 1014,
+      "runId": "run_mlqtt0k7h07l",
+      "failures": [
+        "Expected \"accountInfo\" in src/refactor-target.ts"
+      ]
+    },
+    {
+      "id": "edge_merge_two_configs",
+      "title": "Merge prod and dev config into root with prod priority",
+      "category": "edge_cases_stress",
+      "severity": "high",
+      "passed": true,
+      "durationMs": 1013,
+      "runId": "run_mlqtt1cclelw",
+      "failures": []
+    }
+  ]
+}

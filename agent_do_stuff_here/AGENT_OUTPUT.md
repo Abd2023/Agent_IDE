@@ -2,4 +2,4 @@
 
 Task:
 
-i can't play it , open it for me in the browser, i want to play this game
+Read math_utils.py and write 5 edge-case unit tests using the unittest framework in test_math_utils.py.

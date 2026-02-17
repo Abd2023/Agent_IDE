@@ -1,0 +1,6 @@
+{
+  "apiUrl": "https://api.prod",
+  "timeout": 5000,
+  "featureX": false,
+  "featureY": true
+}

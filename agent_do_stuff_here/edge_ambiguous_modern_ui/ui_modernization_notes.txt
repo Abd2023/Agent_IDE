@@ -1,0 +1,1 @@
+Assumptions: used inline modern styling, gradient background, stronger typography, and elevated controls.

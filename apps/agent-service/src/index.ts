@@ -12,9 +12,9 @@ import type {
   PlanRequest,
   PlanResponse
 } from "@local-agent-ide/core";
-import { executeRun, getRunStatus, type ExecutionRun } from "./executor.js";
+import { executeRun, getRunStatus, routeTask, type ExecutionRun, type TaskIntent } from "./executor.js";
 import { generateChatReply } from "./model.js";
-import { appendChatHistory, getHistorySnapshot, upsertRunHistory } from "./storage.js";
+import { appendChatHistory, deleteHistorySession, getHistorySnapshot, upsertRunHistory } from "./storage.js";
 
 const runs = new Map<string, ExecutionRun>();
 const approvalResolvers = new Map<string, { approvalId: string; resolve: (approved: boolean) => void }>();
@@ -46,6 +46,24 @@ const server = createServer((req, res) => {
       .catch((error) => {
         console.error("[agent-service] failed to read history", error);
         sendJson(res, 500, { error: "history_read_failed" });
+      });
+    return;
+  }
+
+  if (req.method === "DELETE" && pathname === "/history/session") {
+    const workspaceRoot = requestUrl.searchParams.get("workspaceRoot") ?? undefined;
+    const sessionId = requestUrl.searchParams.get("sessionId");
+    if (!sessionId || !sessionId.trim()) {
+      sendJson(res, 400, { error: "invalid_session_id" });
+      return;
+    }
+    deleteHistorySession(sessionId, workspaceRoot)
+      .then(() => {
+        sendJson(res, 200, { ok: true });
+      })
+      .catch((error) => {
+        console.error("[agent-service] failed to delete session", error);
+        sendJson(res, 500, { error: "history_delete_failed" });
       });
     return;
   }
@@ -115,12 +133,14 @@ const server = createServer((req, res) => {
         }
 
         const runId = createRunId();
-        const plan = buildPlan(body.task);
+        const route = routeTask(body.task);
+        const plan = buildPlan(body.task, route.intent);
         const run: ExecutionRun = {
           runId,
           task: body.task.trim(),
           workspaceRoot: body.workspaceRoot,
           sessionId: body.sessionId,
+          route,
           approvalMode: normalizeApprovalMode(body.approvalMode),
           plan,
           isFinished: false,
@@ -409,8 +429,18 @@ function summarizeInOneSentence(content: string): string {
   return `${firstSentence.replace(/[.!?]+$/, "")}.`;
 }
 
-function buildPlan(task: string): AgentPlan {
+function buildPlan(task: string, intent: TaskIntent): AgentPlan {
   const normalizedTask = task.trim();
+  const implementTitle =
+    intent === "browser_interaction"
+      ? "Execute browser interaction steps and capture outputs"
+      : intent === "run_project"
+        ? "Run project/script actions and collect execution results"
+        : intent === "create_new"
+          ? "Create requested artifacts and apply required code changes"
+          : intent === "debug"
+            ? "Investigate failure signals and apply targeted fixes"
+            : "Implement code changes for the requested task";
   return {
     task: normalizedTask,
     steps: [
@@ -426,7 +456,7 @@ function buildPlan(task: string): AgentPlan {
       },
       {
         id: "implement",
-        title: "Implement code changes for the requested task",
+        title: implementTitle,
         status: "pending"
       },
       {

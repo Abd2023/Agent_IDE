@@ -1,0 +1,7 @@
+Log analysis result:
+- Source log: debug.log
+- Tail scanned: 50 lines
+- ECONNREFUSED detected: yes
+- Refused port: 5432
+- Config file with port: config/app.config.json
+- Matching line: {"host":"localhost","port":5432}

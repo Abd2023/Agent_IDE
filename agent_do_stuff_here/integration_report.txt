@@ -1,0 +1,3 @@
+Health check could not be performed due to server start failure.
+Database config:
+$(cat db.config.json)

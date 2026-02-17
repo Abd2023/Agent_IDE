@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import path from "node:path";
 import type {
   ApprovalDecisionRequest,
   ApprovalMode,
@@ -14,6 +15,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const command = vscode.commands.registerCommand("localAgentIDE.openChatPanel", () => {
     let runPollingTimer: NodeJS.Timeout | undefined;
     let currentSessionId = createSessionId();
+    const changedLineDecoration = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true,
+      backgroundColor: new vscode.ThemeColor("editor.rangeHighlightBackground"),
+      overviewRulerColor: "rgba(255, 190, 70, 0.9)",
+      overviewRulerLane: vscode.OverviewRulerLane.Left
+    });
+    const changedLinesByFile = new Map<string, number[]>();
     const panel = vscode.window.createWebviewPanel(
       "localAgentIDE.chat",
       "Local Agent IDE",
@@ -25,9 +33,16 @@ export function activate(context: vscode.ExtensionContext): void {
     void loadHistoryIntoPanel(panel);
 
     const disposable = panel.webview.onDidReceiveMessage(async (message: unknown) => {
+      if (isOpenFileLineMessage(message)) {
+        await openFileAtLine(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, message.payload.path, message.payload.line);
+        return;
+      }
+
       if (isSessionNewMessage(message)) {
         currentSessionId = createSessionId();
         stopRunPolling();
+        changedLinesByFile.clear();
+        clearAllLineHighlights(changedLineDecoration);
         await loadHistoryIntoPanel(panel, currentSessionId);
         return;
       }
@@ -35,7 +50,27 @@ export function activate(context: vscode.ExtensionContext): void {
       if (isSessionSelectMessage(message)) {
         currentSessionId = message.payload.sessionId;
         stopRunPolling();
+        changedLinesByFile.clear();
+        clearAllLineHighlights(changedLineDecoration);
         await loadHistoryIntoPanel(panel, currentSessionId);
+        return;
+      }
+
+      if (isSessionDeleteMessage(message)) {
+        try {
+          await deleteSessionFromAgentService(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, message.payload.sessionId);
+          if (currentSessionId === message.payload.sessionId) {
+            currentSessionId = createSessionId();
+            changedLinesByFile.clear();
+            clearAllLineHighlights(changedLineDecoration);
+            await loadHistoryIntoPanel(panel, currentSessionId);
+            return;
+          }
+          await loadHistoryIntoPanel(panel, currentSessionId);
+        } catch (error) {
+          panel.webview.postMessage({ type: "chat.error", payload: "Failed to delete session." });
+          console.error("[local-agent-ide] session delete failed", error);
+        }
         return;
       }
 
@@ -72,6 +107,7 @@ export function activate(context: vscode.ExtensionContext): void {
         });
 
         panel.webview.postMessage({ type: "chat.response", payload: chatResponse });
+        await postSessionState(panel, currentSessionId);
         const shouldRunTask = typeof message.payload === "string" ? false : Boolean(message.payload.runTask);
         if (shouldRunTask) {
           const planResponse = await requestPlanFromAgentService({
@@ -96,6 +132,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     panel.onDidDispose(() => {
       stopRunPolling();
+      clearAllLineHighlights(changedLineDecoration);
+      changedLineDecoration.dispose();
       disposable.dispose();
     });
 
@@ -104,6 +142,8 @@ export function activate(context: vscode.ExtensionContext): void {
         try {
           const status = await fetchRunStatusFromAgentService(runId);
           panel.webview.postMessage({ type: "run.status", payload: status });
+          updateLineHighlights(status.logs, vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, changedLinesByFile);
+          applyLineHighlights(changedLineDecoration, changedLinesByFile);
 
           if (status.isFinished) {
             stopRunPolling();
@@ -147,13 +187,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
         const history = await fetchHistoryFromAgentService(workspaceRoot, currentSessionId);
         targetPanel.webview.postMessage({ type: "history.load", payload: history });
-        targetPanel.webview.postMessage({
-          type: "session.state",
-          payload: {
-            currentSessionId,
-            sessions: history.sessions
-          }
-        });
+        targetPanel.webview.postMessage({ type: "session.state", payload: { currentSessionId, sessions: history.sessions } });
       } catch (error) {
         targetPanel.webview.postMessage({
           type: "chat.error",
@@ -162,6 +196,20 @@ export function activate(context: vscode.ExtensionContext): void {
         console.error("[local-agent-ide] history load failed", error);
       }
     }
+
+    const activeEditorListener = vscode.window.onDidChangeActiveTextEditor(() => {
+      applyLineHighlights(changedLineDecoration, changedLinesByFile);
+    });
+    const visibleEditorsListener = vscode.window.onDidChangeVisibleTextEditors(() => {
+      applyLineHighlights(changedLineDecoration, changedLinesByFile);
+    });
+    context.subscriptions.push(activeEditorListener, visibleEditorsListener);
+
+    async function postSessionState(targetPanel: vscode.WebviewPanel, activeSessionId: string): Promise<void> {
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const all = await fetchHistoryFromAgentService(workspaceRoot);
+      targetPanel.webview.postMessage({ type: "session.state", payload: { currentSessionId: activeSessionId, sessions: all.sessions } });
+    }
   });
 
   context.subscriptions.push(command);
@@ -169,6 +217,65 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   // no-op for scaffold
+}
+
+function updateLineHighlights(logs: string[], workspaceRoot: string | undefined, target: Map<string, number[]>): void {
+  if (!workspaceRoot) {
+    return;
+  }
+  target.clear();
+  for (const line of logs) {
+    const match = line.match(/line_diff:\s(.+?):(\d+):\s-\s([\s\S]*)\s\|\|\s\+\s([\s\S]*)$/);
+    if (!match) {
+      continue;
+    }
+    const relativePath = match[1];
+    const lineNumber = Number(match[2]);
+    if (!Number.isFinite(lineNumber) || lineNumber < 1) {
+      continue;
+    }
+    const absolutePath = path.resolve(workspaceRoot, relativePath.replace(/\//g, path.sep));
+    const existing = target.get(absolutePath) ?? [];
+    if (!existing.includes(lineNumber)) {
+      existing.push(lineNumber);
+      target.set(absolutePath, existing);
+    }
+  }
+}
+
+function applyLineHighlights(
+  decoration: vscode.TextEditorDecorationType,
+  changedLinesByFile: Map<string, number[]>
+): void {
+  for (const editor of vscode.window.visibleTextEditors) {
+    const key = editor.document.uri.fsPath;
+    const lines = changedLinesByFile.get(key) ?? [];
+    const ranges = lines.map((line) => {
+      const zero = Math.max(0, line - 1);
+      return new vscode.Range(new vscode.Position(zero, 0), new vscode.Position(zero, 0));
+    });
+    editor.setDecorations(decoration, ranges);
+  }
+}
+
+function clearAllLineHighlights(decoration: vscode.TextEditorDecorationType): void {
+  for (const editor of vscode.window.visibleTextEditors) {
+    editor.setDecorations(decoration, []);
+  }
+}
+
+async function openFileAtLine(workspaceRoot: string | undefined, relativePath: string, line: number): Promise<void> {
+  if (!workspaceRoot) {
+    return;
+  }
+  const normalized = relativePath.replace(/\//g, path.sep);
+  const absolutePath = path.resolve(workspaceRoot, normalized);
+  const document = await vscode.workspace.openTextDocument(absolutePath);
+  const editor = await vscode.window.showTextDocument(document, { preview: false });
+  const zeroBasedLine = Math.max(0, line - 1);
+  const pos = new vscode.Position(zeroBasedLine, 0);
+  editor.selection = new vscode.Selection(pos, pos);
+  editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
 }
 
 function getChatHtml(): string {
@@ -199,7 +306,7 @@ function getChatHtml(): string {
       }
       .layout {
         display: grid;
-        grid-template-rows: auto auto minmax(150px, 1.3fr) minmax(140px, 1fr) minmax(140px, 1fr) auto auto;
+        grid-template-rows: auto auto minmax(150px, 1.2fr) minmax(130px, 1fr) minmax(130px, 1fr) auto auto;
         height: 100vh;
         gap: 10px;
         padding: 10px;
@@ -343,7 +450,7 @@ function getChatHtml(): string {
       }
       @media (max-height: 860px) {
         .layout {
-          grid-template-rows: auto auto minmax(120px, 1.1fr) minmax(120px, 1fr) minmax(120px, 1fr) auto auto;
+          grid-template-rows: auto auto minmax(120px, 1fr) minmax(120px, 0.9fr) minmax(120px, 0.9fr) auto auto;
         }
       }
     </style>
@@ -355,6 +462,7 @@ function getChatHtml(): string {
         <div class="toolbar">
           <label for="sessionSelect">Session</label>
           <select id="sessionSelect"></select>
+          <button id="deleteSession">Delete</button>
           <button id="newChat">New Chat</button>
         </div>
       </div>
@@ -392,6 +500,7 @@ function getChatHtml(): string {
       const sendEl = document.getElementById("send");
       const runTaskEl = document.getElementById("runTask");
       const newChatEl = document.getElementById("newChat");
+      const deleteSessionEl = document.getElementById("deleteSession");
       const sessionSelectEl = document.getElementById("sessionSelect");
       const approvalEl = document.getElementById("approval");
       const approvalTextEl = document.getElementById("approvalText");
@@ -469,7 +578,7 @@ function getChatHtml(): string {
         for (const item of sessions) {
           const option = document.createElement("option");
           option.value = item.sessionId;
-          option.textContent = item.sessionId.slice(-8);
+          option.textContent = item.title || item.sessionId.slice(-8);
           if (item.sessionId === current) {
             option.selected = true;
           }
@@ -550,6 +659,11 @@ function getChatHtml(): string {
         if (!sessionId) return;
         vscode.postMessage({ type: "session.select", payload: { sessionId } });
       });
+      deleteSessionEl.addEventListener("click", () => {
+        const sessionId = sessionSelectEl.value;
+        if (!sessionId) return;
+        vscode.postMessage({ type: "session.delete", payload: { sessionId } });
+      });
 
       approveBtnEl.addEventListener("click", () => {
         if (!latestRunId || !latestApprovalId) return;
@@ -578,7 +692,6 @@ function getChatHtml(): string {
         if (msg.type === "chat.response") {
           const data = msg.payload;
           addMessage("Agent:", data.reply);
-          addMessage("Progress:", "Current: " + data.currentStep + " | Next: " + data.nextStep);
           return;
         }
         if (msg.type === "plan.response") {
@@ -673,6 +786,20 @@ async function fetchHistoryFromAgentService(workspaceRoot?: string, sessionId?: 
   return (await response.json()) as HistoryResponse;
 }
 
+async function deleteSessionFromAgentService(workspaceRoot: string | undefined, sessionId: string): Promise<void> {
+  const params = new URLSearchParams();
+  if (workspaceRoot) {
+    params.set("workspaceRoot", workspaceRoot);
+  }
+  params.set("sessionId", sessionId);
+  const query = `?${params.toString()}`;
+  const endpoint = getEndpoint(`/history/session${query}`);
+  const response = await fetch(endpoint, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`agent-service returned status ${response.status}`);
+  }
+}
+
 async function submitApprovalToAgentService(runId: string, request: ApprovalDecisionRequest): Promise<void> {
   const endpoint = getEndpoint(`/runs/${encodeURIComponent(runId)}/approval`);
   const response = await fetch(endpoint, {
@@ -743,6 +870,30 @@ function isSessionSelectMessage(value: unknown): value is { type: "session.selec
   }
   const payload = candidate.payload as { sessionId?: unknown };
   return typeof payload.sessionId === "string" && payload.sessionId.trim().length > 0;
+}
+
+function isSessionDeleteMessage(value: unknown): value is { type: "session.delete"; payload: { sessionId: string } } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as { type?: unknown; payload?: unknown };
+  if (candidate.type !== "session.delete" || !candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+  const payload = candidate.payload as { sessionId?: unknown };
+  return typeof payload.sessionId === "string" && payload.sessionId.trim().length > 0;
+}
+
+function isOpenFileLineMessage(value: unknown): value is { type: "file.open_line"; payload: { path: string; line: number } } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as { type?: unknown; payload?: unknown };
+  if (candidate.type !== "file.open_line" || !candidate.payload || typeof candidate.payload !== "object") {
+    return false;
+  }
+  const payload = candidate.payload as { path?: unknown; line?: unknown };
+  return typeof payload.path === "string" && typeof payload.line === "number" && Number.isFinite(payload.line);
 }
 
 function createSessionId(): string {

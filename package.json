@@ -12,10 +12,12 @@
     "clean": "npm run -ws clean",
     "dev:agent": "npm --workspace @local-agent-ide/agent-service run dev",
     "dev:ext": "npm --workspace @local-agent-ide/vscode-extension run watch",
-    "typecheck": "npm run -ws typecheck"
+    "typecheck": "npm run -ws typecheck",
+    "regress:smoke": "tsx qa/run-regression.ts --mode smoke",
+    "regress:full": "tsx qa/run-regression.ts --mode full",
+    "regress:report": "tsx qa/run-regression.ts --report-only"
   },
   "engines": {
     "node": ">=20"
   }
 }
-

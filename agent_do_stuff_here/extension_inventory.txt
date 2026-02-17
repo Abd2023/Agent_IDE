@@ -1,0 +1,12 @@
+.css: 1
+.html: 8
+.jpg: 1
+.js: 6
+.json: 7
+.jsx: 2
+.log: 1
+.md: 4
+.png: 1
+.py: 7
+.ts: 3
+.txt: 12

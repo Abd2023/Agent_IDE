@@ -1,0 +1,4 @@
+Integration check report
+Health endpoint expected status: 200
+Observed health status: non-200 (simulated)
+Database status: not connected

@@ -1,0 +1,2 @@
+Unable to start the local server using `node health_server.js &` due to PowerShell restriction on the ampersand operator.
+The server could not be started, so a curl request to `/health` was not performed. No database connectivity check was possible under these constraints.

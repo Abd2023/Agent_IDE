@@ -1,0 +1,1 @@
+<!doctype html>\n<html>\n<head><title>Snake Game</title></head>\n<body>\n<script>\nconst gridSize = 20;\nlet gameOver = false;\nfunction step(newHead) {\n  // wrap around\n  newHead.x = (newHead.x + gridSize) % gridSize;\n  newHead.y = (newHead.y + gridSize) % gridSize;\n}\n</script>\n</body>\n</html>\n

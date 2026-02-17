@@ -136,11 +136,52 @@ export async function getHistorySnapshot(workspaceRoot?: string, sessionId?: str
     }
   }
 
+  const sessionFirstUserMessage = new Map<string, string>();
+  for (const chat of history.chats) {
+    if (!scopeByWorkspace(chat) || !chat.sessionId || chat.role !== "user") {
+      continue;
+    }
+    if (!sessionFirstUserMessage.has(chat.sessionId)) {
+      sessionFirstUserMessage.set(chat.sessionId, chat.message);
+    }
+  }
+
   const sessions = Array.from(sessionsByUpdatedAt.entries())
-    .map(([id, updatedAt]) => ({ sessionId: id, updatedAt }))
+    .map(([id, updatedAt]) => ({
+      sessionId: id,
+      updatedAt,
+      title: buildSessionTitle(sessionFirstUserMessage.get(id))
+    }))
     .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
 
   return { chats, runs, sessions };
+}
+
+export async function deleteHistorySession(sessionId: string, workspaceRoot?: string): Promise<void> {
+  const normalizedWorkspace = workspaceRoot?.toLowerCase();
+  const normalizedSessionId = sessionId.toLowerCase();
+
+  await enqueueWrite(async (history) => {
+    history.chats = history.chats.filter((item) => {
+      if (!item.sessionId || item.sessionId.toLowerCase() !== normalizedSessionId) {
+        return true;
+      }
+      if (!normalizedWorkspace) {
+        return false;
+      }
+      return item.workspaceRoot?.toLowerCase() !== normalizedWorkspace;
+    });
+
+    history.runs = history.runs.filter((item) => {
+      if (!item.sessionId || item.sessionId.toLowerCase() !== normalizedSessionId) {
+        return true;
+      }
+      if (!normalizedWorkspace) {
+        return false;
+      }
+      return item.workspaceRoot?.toLowerCase() !== normalizedWorkspace;
+    });
+  });
 }
 
 async function enqueueWrite(mutator: (history: HistoryFile) => void | Promise<void>): Promise<void> {
@@ -173,4 +214,15 @@ async function saveHistory(history: HistoryFile): Promise<void> {
 
 function createId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildSessionTitle(firstUserMessage?: string): string {
+  if (!firstUserMessage) {
+    return "New Chat";
+  }
+  const compact = firstUserMessage.replace(/\s+/g, " ").trim();
+  if (!compact) {
+    return "New Chat";
+  }
+  return compact.length > 56 ? `${compact.slice(0, 56)}...` : compact;
 }

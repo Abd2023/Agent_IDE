@@ -1,0 +1,4 @@
+Performance report
+Measured: 0.744 seconds
+Runtime is within threshold.
+Potential slow loop: nested iteration in script.py.
